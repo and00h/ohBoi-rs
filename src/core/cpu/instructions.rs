@@ -7,13 +7,15 @@ type NoArgOp = fn(&mut Cpu);
 type OneArgOp = fn(&mut Cpu, u8);
 type TwoArgOp = fn(&mut Cpu, u16);
 
-pub(super) enum Instruction {
+pub(super) enum InstructionType {
     NoArgs(NoArgOp),
     OneArg(OneArgOp),
     TwoArgs(TwoArgOp),
 }
 
-use Instruction::{NoArgs, OneArg, TwoArgs};
+use InstructionType::{NoArgs, OneArg, TwoArgs};
+
+use super::CpuState;
 
 fn op_indirect<F>(cpu: &mut Cpu, mut op: F)
     where
@@ -35,7 +37,132 @@ fn unknown(_cpu: &mut Cpu) {
     panic!("Unknown opcode!");
 }
 
-pub(super) static OPS: [Instruction; 0x100] = [
+pub(crate) enum InstArg {
+    None,
+    Byte(u8),
+    Word(u16)
+}
+enum InstState {
+    Fetching,
+    ReadArg,
+    ReadArgLo,
+    ReadArgHi,
+    ALU16ReadHi,
+    ALU16WriteHi,
+    UpdatePC,
+    ReadMemory,
+    ReadMemoryLo,
+    ReadMemoryHi,
+    WriteMemory,
+    WriteMemoryLo,
+    WriteMemoryHi,
+    Executing(InstArg, usize),
+    Executed
+}
+
+pub struct Inst<F: FnMut(&mut Cpu)> {
+    inst_type: InstructionType,
+    latency: usize,
+    arg: Option<InstArg>,
+    transition_func: Box<F>
+}
+
+impl<F: FnMut(&mut Cpu)> Inst<F> {
+    pub fn new(inst_type: InstructionType, transition_func: F, latency: usize) -> Self {
+        Self::with_initial_state(inst_type, transition_func, latency, InstState::Fetching)
+    }
+
+    pub fn with_initial_state(inst_type: InstructionType, transition_func: F, latency: usize, state: InstState) -> Self {
+        Inst {
+            inst_type,
+            transition_func: Box::new(transition_func),
+            latency,
+            arg: None
+        }
+    }
+
+    pub fn advance(&mut self, cpu: &mut Cpu) {
+        (*self.transition_func)(cpu);
+    }
+
+    pub fn executes_immediately(&self) -> bool {
+        self.latency == 0
+    }
+}
+
+fn nop(cpu: &mut Cpu) -> CpuState {
+    CpuState::FinishedExecution
+}
+
+pub(super) static INSTRUCTIONS: [fn(&mut Cpu); 0x100] = [
+    nop,
+    |cpu| cpu.load_word_imm(Register16::BC),
+    |cpu| cpu.store_indirect(Register16::BC),
+    |cpu| cpu.inc16(Register16::BC),
+    |cpu| cpu.zero_latency(|cpu| cpu.inc8(Register8::B)),
+    |cpu| cpu.zero_latency(|cpu| cpu.dec8(Register8::B)),
+    |cpu| cpu.one_arg(|cpu, arg| cpu.load_immediate(Register8::B, arg)),
+    |cpu| cpu.zero_latency(Cpu::rlca),
+    Cpu::store_sp,
+    |cpu| cpu.add_hl(Register16::BC),
+    |cpu| cpu.load_indirect(Register8::A, Register16::BC),
+    |cpu| cpu.dec16(Register16::BC),
+    |cpu| cpu.zero_latency(|cpu| cpu.inc8(Register8::C)),
+    |cpu| cpu.zero_latency(|cpu| cpu.dec8(Register8::C)),
+    |cpu| cpu.one_arg(|cpu, arg| cpu.load_immediate(Register8::C, arg)),
+    |cpu| cpu.zero_latency(Cpu::rrca),
+    |cpu| cpu.stop(),
+    |cpu| cpu.load_word_imm(Register16::DE),
+    |cpu| cpu.store_indirect(Register16::DE),
+    |cpu| cpu.inc16(Register16::DE),
+    |cpu| cpu.zero_latency(|cpu| cpu.inc8(Register8::D)),
+    |cpu| cpu.zero_latency(|cpu| cpu.dec8(Register8::D)),
+    |cpu| cpu.one_arg(|cpu, arg| cpu.load_immediate(Register8::D, arg)),
+    |cpu| cpu.zero_latency(Cpu::rla),
+    |cpu| cpu.jump_rel_conditional(true),
+    |cpu| cpu.add_hl(Register16::DE),
+    |cpu| cpu.load_indirect(Register8::A, Register16::DE),
+    |cpu| cpu.dec16(Register16::DE),
+    |cpu| cpu.zero_latency(|cpu| cpu.inc8(Register8::E)),
+    |cpu| cpu.zero_latency(|cpu| cpu.dec8(Register8::E)),
+    |cpu| cpu.one_arg(|cpu, arg| cpu.load_immediate(Register8::E, arg)),
+    |cpu| cpu.zero_latency(Cpu::rra),
+    |cpu| cpu.jump_rel_conditional(!cpu.registers.test_flag(CpuFlag::Zero)),
+    |cpu| cpu.load_word_imm(Register16::HL),
+    Cpu::store_hl_inc,
+    |cpu| cpu.inc16(Register16::HL),
+    |cpu| cpu.zero_latency(|cpu| cpu.inc8(Register8::H)),
+    |cpu| cpu.zero_latency(|cpu| cpu.dec8(Register8::H)),
+    |cpu| cpu.one_arg(|cpu, arg| cpu.load_immediate(Register8::H, arg)),
+    |cpu| cpu.zero_latency(Cpu::daa),
+    |cpu| cpu.jump_rel_conditional(cpu.registers.test_flag(CpuFlag::Zero)),
+    |cpu| cpu.add_hl(Register16::HL),
+    Cpu::load_hl_inc,
+    |cpu| cpu.dec16(Register16::HL),
+    |cpu| cpu.zero_latency(|cpu| cpu.inc8(Register8::L)),
+    |cpu| cpu.zero_latency(|cpu| cpu.dec8(Register8::L)),
+    |cpu| cpu.one_arg(|cpu, arg| cpu.load_immediate(Register8::L, arg)),
+    |cpu| cpu.zero_latency(Cpu::cpl),
+    |cpu| cpu.jump_rel_conditional(!cpu.registers.test_flag(CpuFlag::Carry)),
+    Cpu::load_word_sp,
+    Cpu::store_hl_dec,
+    Cpu::inc_sp,
+    Cpu::inc_hl_indirect,
+    Cpu::dec_hl_indirect
+    |cpu| cpu.one_arg(|cpu, arg| cpu.load_immediate(Register8::H, arg)),
+    |cpu| cpu.zero_latency(Cpu::daa),
+    |cpu| cpu.jump_rel_conditional(cpu.registers.test_flag(CpuFlag::Zero)),
+    |cpu| cpu.add_hl(Register16::HL),
+    Cpu::load_hl_inc,
+    |cpu| cpu.dec16(Register16::HL),
+    |cpu| cpu.zero_latency(|cpu| cpu.inc8(Register8::L)),
+    |cpu| cpu.zero_latency(|cpu| cpu.dec8(Register8::L)),
+    |cpu| cpu.one_arg(|cpu, arg| cpu.load_immediate(Register8::L, arg)),
+    |cpu| cpu.zero_latency(Cpu::cpl),
+
+];
+
+pub(super) static OPS: [InstructionType; 0x100] = [
     NoArgs(|_| {}),
     TwoArgs(|cpu, data| cpu.load_word(BC, data)),
     NoArgs(|cpu| cpu.store_indirect(A, BC)),
