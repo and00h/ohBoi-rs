@@ -62,31 +62,20 @@ enum InstState {
 
 pub struct Inst<F: FnMut(&mut Cpu)> {
     inst_type: InstructionType,
-    latency: usize,
-    arg: Option<InstArg>,
     transition_func: Box<F>
 }
 
 impl<F: FnMut(&mut Cpu)> Inst<F> {
     pub fn new(inst_type: InstructionType, transition_func: F, latency: usize) -> Self {
-        Self::with_initial_state(inst_type, transition_func, latency, InstState::Fetching)
-    }
-
-    pub fn with_initial_state(inst_type: InstructionType, transition_func: F, latency: usize, state: InstState) -> Self {
         Inst {
             inst_type,
             transition_func: Box::new(transition_func),
             latency,
-            arg: None
         }
     }
 
     pub fn advance(&mut self, cpu: &mut Cpu) {
         (*self.transition_func)(cpu);
-    }
-
-    pub fn executes_immediately(&self) -> bool {
-        self.latency == 0
     }
 }
 
@@ -148,18 +137,105 @@ pub(super) static INSTRUCTIONS: [fn(&mut Cpu); 0x100] = [
     Cpu::store_hl_dec,
     Cpu::inc_sp,
     Cpu::inc_hl_indirect,
-    Cpu::dec_hl_indirect
-    |cpu| cpu.one_arg(|cpu, arg| cpu.load_immediate(Register8::H, arg)),
-    |cpu| cpu.zero_latency(Cpu::daa),
-    |cpu| cpu.jump_rel_conditional(cpu.registers.test_flag(CpuFlag::Zero)),
-    |cpu| cpu.add_hl(Register16::HL),
-    Cpu::load_hl_inc,
-    |cpu| cpu.dec16(Register16::HL),
-    |cpu| cpu.zero_latency(|cpu| cpu.inc8(Register8::L)),
-    |cpu| cpu.zero_latency(|cpu| cpu.dec8(Register8::L)),
-    |cpu| cpu.one_arg(|cpu, arg| cpu.load_immediate(Register8::L, arg)),
-    |cpu| cpu.zero_latency(Cpu::cpl),
-
+    Cpu::dec_hl_indirect,
+    Cpu::store_hl_imm,
+    |cpu| cpu.zero_latency(Cpu::scf),
+    |cpu| cpu.jump_rel_conditional(cpu.registers.test_flag(CpuFlag::Carry)),
+    Cpu::add_hl_sp,
+    Cpu::load_hl_dec,
+    Cpu::dec_sp,
+    |cpu| cpu.zero_latency(|cpu| cpu.inc8(Register8::A)),
+    |cpu| cpu.zero_latency(|cpu| cpu.dec8(Register8::A)),
+    |cpu| cpu.one_arg(|cpu, arg| cpu.load_immediate(Register8::A, arg)),
+    Cpu::ccf,
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(B, B)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(B, C)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(B, D)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(B, E)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(B, H)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(B, L)),
+    |cpu| cpu.hl_src_reg_op(|cpu, val| cpu.registers.set_reg8(B, val)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(B, A)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(C, B)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(C, C)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(C, D)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(C, E)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(C, H)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(C, L)),
+    |cpu| cpu.hl_src_reg_op(|cpu, val| cpu.registers.set_reg8(C, val)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(C, A)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(D, B)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(D, C)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(D, D)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(D, E)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(D, H)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(D, L)),
+    |cpu| cpu.hl_src_reg_op(|cpu, val| cpu.registers.set_reg8(D, val)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(D, A)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(E, B)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(E, C)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(E, D)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(E, E)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(E, H)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(E, L)),
+    |cpu| cpu.hl_src_reg_op(|cpu, val| cpu.registers.set_reg8(E, val)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(E, A)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(H, B)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(H, C)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(H, D)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(H, E)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(H, H)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(H, L)),
+    |cpu| cpu.hl_src_reg_op(|cpu, val| cpu.registers.set_reg8(H, val)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(H, A)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(L, B)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(L, C)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(L, D)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(L, E)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(L, H)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(L, L)),
+    |cpu| cpu.hl_src_reg_op(|cpu, val| cpu.registers.set_reg8(L, val)),
+    |cpu| cpu.zero_latency(|cpu| cpu.registers.load(L, A)),
+    |cpu| cpu.hl_dst_reg_op(|cpu| cpu.registers.get_reg8(B)),
+    |cpu| cpu.hl_dst_reg_op(|cpu| cpu.registers.get_reg8(C)),
+    |cpu| cpu.hl_dst_reg_op(|cpu| cpu.registers.get_reg8(D)),
+    |cpu| cpu.hl_dst_reg_op(|cpu| cpu.registers.get_reg8(E)),
+    |cpu| cpu.hl_dst_reg_op(|cpu| cpu.registers.get_reg8(H)),
+    |cpu| cpu.hl_dst_reg_op(|cpu| cpu.registers.get_reg8(L)),
+    Cpu::halt,
+    |cpu| cpu.hl_dst_reg_op(|cpu| cpu.registers.get_reg8(A)),
+    |cpu| cpu.zero_latency(|cpu| cpu.add(cpu.registers.get_reg8(B))),
+    |cpu| cpu.zero_latency(|cpu| cpu.add(cpu.registers.get_reg8(C))),
+    |cpu| cpu.zero_latency(|cpu| cpu.add(cpu.registers.get_reg8(D))),
+    |cpu| cpu.zero_latency(|cpu| cpu.add(cpu.registers.get_reg8(E))),
+    |cpu| cpu.zero_latency(|cpu| cpu.add(cpu.registers.get_reg8(H))),
+    |cpu| cpu.zero_latency(|cpu| cpu.add(cpu.registers.get_reg8(L))),
+    |cpu| cpu.hl_src_reg_op(Cpu::add),
+    |cpu| cpu.zero_latency(|cpu| cpu.add(cpu.registers.get_reg8(A))),
+    |cpu| cpu.zero_latency(|cpu| cpu.adc(cpu.registers.get_reg8(B))),
+    |cpu| cpu.zero_latency(|cpu| cpu.adc(cpu.registers.get_reg8(C))),
+    |cpu| cpu.zero_latency(|cpu| cpu.adc(cpu.registers.get_reg8(D))),
+    |cpu| cpu.zero_latency(|cpu| cpu.adc(cpu.registers.get_reg8(E))),
+    |cpu| cpu.zero_latency(|cpu| cpu.adc(cpu.registers.get_reg8(H))),
+    |cpu| cpu.zero_latency(|cpu| cpu.adc(cpu.registers.get_reg8(L))),
+    |cpu| cpu.hl_src_reg_op(Cpu::adc),
+    |cpu| cpu.zero_latency(|cpu| cpu.adc(cpu.registers.get_reg8(A))),
+    |cpu| cpu.zero_latency(|cpu| cpu.sub(cpu.registers.get_reg8(B))),
+    |cpu| cpu.zero_latency(|cpu| cpu.sub(cpu.registers.get_reg8(C))),
+    |cpu| cpu.zero_latency(|cpu| cpu.sub(cpu.registers.get_reg8(D))),
+    |cpu| cpu.zero_latency(|cpu| cpu.sub(cpu.registers.get_reg8(E))),
+    |cpu| cpu.zero_latency(|cpu| cpu.sub(cpu.registers.get_reg8(H))),
+    |cpu| cpu.zero_latency(|cpu| cpu.sub(cpu.registers.get_reg8(L))),
+    |cpu| cpu.hl_src_reg_op(Cpu::sub),
+    |cpu| cpu.zero_latency(|cpu| cpu.sub(cpu.registers.get_reg8(A))),
+    |cpu| cpu.zero_latency(|cpu| cpu.sbc(cpu.registers.get_reg8(B))),
+    |cpu| cpu.zero_latency(|cpu| cpu.sbc(cpu.registers.get_reg8(C))),
+    |cpu| cpu.zero_latency(|cpu| cpu.sbc(cpu.registers.get_reg8(D))),
+    |cpu| cpu.zero_latency(|cpu| cpu.sbc(cpu.registers.get_reg8(E))),
+    |cpu| cpu.zero_latency(|cpu| cpu.sbc(cpu.registers.get_reg8(H))),
+    |cpu| cpu.zero_latency(|cpu| cpu.sbc(cpu.registers.get_reg8(L))),
+    |cpu| cpu.hl_src_reg_op(Cpu::sbc),
+    |cpu| cpu.zero_latency(|cpu| cpu.sbc(cpu.registers.get_reg8(A))),
 ];
 
 pub(super) static OPS: [InstructionType; 0x100] = [

@@ -2,7 +2,6 @@ mod instructions;
 mod prefixed_insts;
 
 use std::cell::{Ref, RefCell};
-use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, Weak};
 use crate::core::bus::{Bus, BusController};
 use crate::core::interrupts::{Interrupt, InterruptController};
@@ -279,6 +278,10 @@ impl Cpu {
                 CpuState::WriteMemory(addr, data)
             },
             CpuState::WriteMemory(addr, data) => {
+                self.registers.set_flag_cond(CpuFlag::HalfCarry, (data & 0xF) == 0);
+                self.registers.set_flag_cond(CpuFlag::Zero, data == 0);
+                self.registers.reset_flag(CpuFlag::Sub);
+                
                 self.bus.write(addr, data);
                 CpuState::FinishedExecution
             },
@@ -295,6 +298,9 @@ impl Cpu {
                 CpuState::WriteMemory(addr, data)
             },
             CpuState::WriteMemory(addr, data) => {
+                self.registers.set_flag_cond(CpuFlag::HalfCarry, (data & 0xF) == 0xF);
+                self.registers.set_flag_cond(CpuFlag::Zero, data == 0);
+                self.registers.set_flag(CpuFlag::Sub);
                 self.bus.write(addr, data);
                 CpuState::FinishedExecution
             },
@@ -451,7 +457,51 @@ impl Cpu {
             _ => unreachable!()
         }
     }
+    
+    fn store_hl_imm(&mut self) {
+        self.state =
+        match self.state {
+            CpuState::StartedExecution => CpuState::ReadArg,
+            CpuState::ReadArg => {
+                let val = self.bus.read(self.pc);
+                self.pc += 1;
+                let addr = self.registers.get_reg16(Register16::HL);
+                CpuState::WriteMemory(addr, val)
+            },
+            CpuState::WriteMemory(addr, val) => {
+                self.bus.write(addr, val);
+            }
+        }
+    }
+    
+    fn add_hl_sp(&mut self) {
+        let (hi, lo) = ((self.sp >> 8) as u8, (self.sp & 0xFF) as u8);
+        self.state =
+        match self.state {
+            CpuState::StartedExecution => {
+                let hl = self.registers.get_reg16(Register16::HL);
 
+                self.registers.set_flag_cond(CpuFlag::HalfCarry, (hl & 0x0FFF) > (0x0FFFu16.wrapping_sub(self.sp & 0x0FFF)));
+                self.registers.set_flag_cond(CpuFlag::Carry, hl > (0xFFFFu16.wrapping_sub(self.sp)));
+                self.registers.reset_flag(CpuFlag::Sub);
+
+                let (res, overflow) = self.registers.get_reg8(Register8::L).overflowing_add((self.sp & 0xFF) as u8);
+
+                self.registers.set_reg8(Register8::L, res);
+                CpuState::ALU16WriteHi(overflow)
+            },
+            CpuState::ALU16WriteHi(overflow) => {
+                let mut data = (self.sp & 0xFF) as u8;
+                if overflow { data += 1; }
+
+                self.registers.set_reg8(Register8::H, self.registers.get_reg8(hi).wrapping_add(data));
+                CpuState::FinishedExecution
+            },
+            _ => unreachable!()
+        }
+    }
+
+    
     fn zero_latency<F: FnMut(&mut Cpu)>(&mut self, f: F) {
         if let CpuState::StartedExecution = self.state {
             f(self);
@@ -471,6 +521,28 @@ impl Cpu {
                 CpuState::FinishedExecution
             },
             _ => unreachable!()
+        }
+    }
+    
+    fn hl_src_reg_op<F: FnMut(&mut Cpu, u8)>(&mut self, f: F) {
+        self.state = match self.state {
+            CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(Register16::HL)),
+            CpuState::ReadMemory(addr) => {
+                let data = self.bus.read(addr);
+                f(self, data);
+                CpuState::FinishedExecution
+            }
+        }
+    }
+    
+    fn hl_dst_reg_op<F: FnMut(&mut Cpu) -> u8>(&mut self, f: F) {
+        self.state =
+        match self.state {
+            CpuState::StartedExecution => CpuState::WriteMemory(self.registers.get_reg16(Register16::HL), f(self)),
+            CpuState::WriteMemory(addr, val) => {
+                self.bus.write(addr, val);
+                CpuState::FinishedExecution
+            }
         }
     }
 
