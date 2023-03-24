@@ -14,12 +14,12 @@ mod timer_masks {
 const TIMER_INCREMENTS: [i32; 4] = [1024, 16, 64, 256];
 
 pub struct Timer {
-    tima: u8,
-    tma: u8,
+    pub tima: u8,
+    pub tma: u8,
     tac: u8,
     timer_counter: i32,
-    divider: u8,
-    divider_counter: u32,
+    pub divider: u8,
+    divider_counter: u8,
     timer_overflow: bool,
     interrupt_controller: Rc<RefCell<InterruptController>>
 }
@@ -52,16 +52,16 @@ impl Timer {
         TIMER_INCREMENTS[idx]
     }
 
-    pub fn clock(&mut self, cycles: u32) {
+    pub fn clock(&mut self) {
         // Divider
-        self.divider_counter += cycles;
-        if self.divider_counter >= 0xFF {
-            self.divider_counter -= 0xFF;
+        let (counter, overflow) = self.divider_counter.overflowing_add(4);
+        self.divider_counter = counter;
+        if overflow {
             self.divider = self.divider.wrapping_add(1);
         }
 
         if self.timer_enabled() {
-            self.timer_counter -= cycles as i32;
+            self.timer_counter -= 4;
             let increment = self.get_timer_increment();
             while self.timer_counter <= 0 {
                 self.timer_counter += increment;

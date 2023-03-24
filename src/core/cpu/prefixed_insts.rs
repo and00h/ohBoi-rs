@@ -1,4 +1,4 @@
-use crate::core::cpu::{CpuFlag, Register16, Register8};
+use crate::core::cpu::{CpuFlag, CpuState, Register16, Register8};
 use crate::core::cpu::Cpu;
 use Register16::*;
 use Register8::*;
@@ -9,48 +9,80 @@ enum Register {
     WordReg(Register16)
 }
 
-type PrefixedInstruction = fn(&mut Cpu);
+type PrefixedInstruction = fn(&mut Cpu) -> CpuState;
 
 #[inline]
-fn op_reg<F>(mut f: F, cpu: &mut Cpu, reg: Register8)
+fn op_reg<F>(mut f: F, cpu: &mut Cpu, reg: Register8) -> CpuState
     where
         F: FnMut(&mut Cpu, u8) -> u8
 {
-    let val = cpu.registers.get_reg8(reg);
-    let res = f(cpu, val);
-    cpu.registers.set_reg8(reg, res);
+    match cpu.state {
+        CpuState::ReadArg => {
+            let val = cpu.registers.get_reg8(reg);
+            let res = f(cpu, val);
+            cpu.registers.set_reg8(reg, res);
+
+            CpuState::FinishedExecution
+        },
+        _ => unreachable!()
+    }
 }
 
 #[inline]
-fn op_hl<F>(mut f: F, cpu: &mut Cpu)
+fn op_hl<F>(mut f: F, cpu: &mut Cpu) -> CpuState
     where
         F: FnMut(&mut Cpu, u8) -> u8
 {
-    let addr = cpu.registers.get_reg16(HL);
-    let val = cpu.read_memory(addr);
-    let res = f(cpu, val);
-    cpu.write_memory(addr, res);
+    match cpu.state {
+        CpuState::ReadArg => CpuState::ReadMemory(cpu.registers.get_reg16(HL)),
+        CpuState::ReadMemory(addr) => {
+            let val = cpu.bus.read(addr);
+            let res = f(cpu, val);
+            CpuState::WriteMemory(addr, res)
+        },
+        CpuState::WriteMemory(addr, val) => {
+            cpu.bus.write(addr, val);
+            CpuState::FinishedExecution
+        },
+        _ => unreachable!()
+    }
 }
 
 #[inline]
-fn bit_op_reg<F>(mut f: F, cpu: &mut Cpu, bit: usize, reg: Register8)
+fn bit_op_reg<F>(mut f: F, cpu: &mut Cpu, bit: usize, reg: Register8) -> CpuState
     where
         F: FnMut(usize, u8) -> u8
 {
-    let val = cpu.registers.get_reg8(reg);
-    let res = f(bit, val);
-    cpu.registers.set_reg8(reg, res);
+    match cpu.state {
+        CpuState::ReadArg => {
+            let val = cpu.registers.get_reg8(reg);
+            let res = f(bit, val);
+            cpu.registers.set_reg8(reg, res);
+
+            CpuState::FinishedExecution
+        },
+        _ => unreachable!()
+    }
 }
 
 #[inline]
-fn bit_op_hl<F>(mut f: F, cpu: &mut Cpu, bit: usize)
+fn bit_op_hl<F>(mut f: F, cpu: &mut Cpu, bit: usize) -> CpuState
     where
         F: FnMut(usize, u8) -> u8
 {
-    let addr = cpu.registers.get_reg16(HL);
-    let val = cpu.read_memory(addr);
-    let res = f(bit, val);
-    cpu.write_memory(addr, res);
+    match cpu.state {
+        CpuState::ReadArg => CpuState::ReadMemory(cpu.registers.get_reg16(HL)),
+        CpuState::ReadMemory(addr) => {
+            let val = cpu.bus.read(addr);
+            let res = f(bit, val);
+            CpuState::WriteMemory(addr, res)
+        },
+        CpuState::WriteMemory(addr, val) => {
+            cpu.bus.write(addr, val);
+            CpuState::FinishedExecution
+        },
+        _ => unreachable!()
+    }
 }
 
 fn rlc(cpu: &mut Cpu, val: u8) -> u8 {
@@ -153,17 +185,35 @@ fn set(bit: usize, val: u8) -> u8 {
     val | (1 << bit)
 }
 
-fn bit(cpu: &mut Cpu, bit: usize, reg: Register) {
-    let val =
-        if let ByteReg(r) = reg {
-            cpu.registers.get_reg8(r)
-        } else {
-            let addr = cpu.registers.get_reg16(HL);
-            cpu.read_memory(addr)
-        };
+fn bit(cpu: &mut Cpu, bit: usize, val: u8) {
     cpu.registers.set_flag_cond(Zero, (val & (1 << bit)) == 0);
     cpu.registers.reset_flag(Sub);
     cpu.registers.set_flag(HalfCarry);
+}
+
+fn bit_hl(cpu: &mut Cpu, n: usize) -> CpuState {
+        match cpu.state {
+            CpuState::ReadArg => CpuState::ReadMemory(cpu.registers.get_reg16(HL)),
+            CpuState::ReadMemory(addr) => {
+                let val = cpu.bus.read(addr);
+                bit(cpu, n, val);
+
+                CpuState::FinishedExecution
+            },
+            _ => unreachable!()
+        }
+}
+
+fn bit_reg(cpu: &mut Cpu, n: usize, reg: Register8) -> CpuState {
+        match cpu.state {
+            CpuState::ReadArg => {
+                let val = cpu.registers.get_reg8(reg);
+                bit(cpu, n, val);
+
+                CpuState::FinishedExecution
+            },
+            _ => unreachable!()
+        }
 }
 
 use Register::*;
@@ -233,70 +283,70 @@ pub(super) static PREFIXED_INSTS: [PrefixedInstruction; 0x100] = [
     |cpu| op_reg(srl, cpu, L),
     |cpu| op_hl(srl, cpu),
     |cpu| op_reg(srl, cpu, A),
-    |cpu| bit(cpu, 0, ByteReg(B)),
-    |cpu| bit(cpu, 0, ByteReg(C)),
-    |cpu| bit(cpu, 0, ByteReg(D)),
-    |cpu| bit(cpu, 0, ByteReg(E)),
-    |cpu| bit(cpu, 0, ByteReg(H)),
-    |cpu| bit(cpu, 0, ByteReg(L)),
-    |cpu| bit(cpu, 0, WordReg(HL)),
-    |cpu| bit(cpu, 0, ByteReg(A)),
-    |cpu| bit(cpu, 1, ByteReg(B)),
-    |cpu| bit(cpu, 1, ByteReg(C)),
-    |cpu| bit(cpu, 1, ByteReg(D)),
-    |cpu| bit(cpu, 1, ByteReg(E)),
-    |cpu| bit(cpu, 1, ByteReg(H)),
-    |cpu| bit(cpu, 1, ByteReg(L)),
-    |cpu| bit(cpu, 1, WordReg(HL)),
-    |cpu| bit(cpu, 1, ByteReg(A)),
-    |cpu| bit(cpu, 2, ByteReg(B)),
-    |cpu| bit(cpu, 2, ByteReg(C)),
-    |cpu| bit(cpu, 2, ByteReg(D)),
-    |cpu| bit(cpu, 2, ByteReg(E)),
-    |cpu| bit(cpu, 2, ByteReg(H)),
-    |cpu| bit(cpu, 2, ByteReg(L)),
-    |cpu| bit(cpu, 2, WordReg(HL)),
-    |cpu| bit(cpu, 2, ByteReg(A)),
-    |cpu| bit(cpu, 3, ByteReg(B)),
-    |cpu| bit(cpu, 3, ByteReg(C)),
-    |cpu| bit(cpu, 3, ByteReg(D)),
-    |cpu| bit(cpu, 3, ByteReg(E)),
-    |cpu| bit(cpu, 3, ByteReg(H)),
-    |cpu| bit(cpu, 3, ByteReg(L)),
-    |cpu| bit(cpu, 3, WordReg(HL)),
-    |cpu| bit(cpu, 3, ByteReg(A)),
-    |cpu| bit(cpu, 4, ByteReg(B)),
-    |cpu| bit(cpu, 4, ByteReg(C)),
-    |cpu| bit(cpu, 4, ByteReg(D)),
-    |cpu| bit(cpu, 4, ByteReg(E)),
-    |cpu| bit(cpu, 4, ByteReg(H)),
-    |cpu| bit(cpu, 4, ByteReg(L)),
-    |cpu| bit(cpu, 4, WordReg(HL)),
-    |cpu| bit(cpu, 4, ByteReg(A)),
-    |cpu| bit(cpu, 5, ByteReg(B)),
-    |cpu| bit(cpu, 5, ByteReg(C)),
-    |cpu| bit(cpu, 5, ByteReg(D)),
-    |cpu| bit(cpu, 5, ByteReg(E)),
-    |cpu| bit(cpu, 5, ByteReg(H)),
-    |cpu| bit(cpu, 5, ByteReg(L)),
-    |cpu| bit(cpu, 5, WordReg(HL)),
-    |cpu| bit(cpu, 5, ByteReg(A)),
-    |cpu| bit(cpu, 6, ByteReg(B)),
-    |cpu| bit(cpu, 6, ByteReg(C)),
-    |cpu| bit(cpu, 6, ByteReg(D)),
-    |cpu| bit(cpu, 6, ByteReg(E)),
-    |cpu| bit(cpu, 6, ByteReg(H)),
-    |cpu| bit(cpu, 6, ByteReg(L)),
-    |cpu| bit(cpu, 6, WordReg(HL)),
-    |cpu| bit(cpu, 6, ByteReg(A)),
-    |cpu| bit(cpu, 7, ByteReg(B)),
-    |cpu| bit(cpu, 7, ByteReg(C)),
-    |cpu| bit(cpu, 7, ByteReg(D)),
-    |cpu| bit(cpu, 7, ByteReg(E)),
-    |cpu| bit(cpu, 7, ByteReg(H)),
-    |cpu| bit(cpu, 7, ByteReg(L)),
-    |cpu| bit(cpu, 7, WordReg(HL)),
-    |cpu| bit(cpu, 7, ByteReg(A)),
+    |cpu| bit_reg(cpu, 0, B),
+    |cpu| bit_reg(cpu, 0, C),
+    |cpu| bit_reg(cpu, 0, D),
+    |cpu| bit_reg(cpu, 0, E),
+    |cpu| bit_reg(cpu, 0, H),
+    |cpu| bit_reg(cpu, 0, L),
+    |cpu| bit_hl(cpu, 0),
+    |cpu| bit_reg(cpu, 0, A),
+    |cpu| bit_reg(cpu, 1, B),
+    |cpu| bit_reg(cpu, 1, C),
+    |cpu| bit_reg(cpu, 1, D),
+    |cpu| bit_reg(cpu, 1, E),
+    |cpu| bit_reg(cpu, 1, H),
+    |cpu| bit_reg(cpu, 1, L),
+    |cpu| bit_hl(cpu, 1),
+    |cpu| bit_reg(cpu, 1, A),
+    |cpu| bit_reg(cpu, 2, B),
+    |cpu| bit_reg(cpu, 2, C),
+    |cpu| bit_reg(cpu, 2, D),
+    |cpu| bit_reg(cpu, 2, E),
+    |cpu| bit_reg(cpu, 2, H),
+    |cpu| bit_reg(cpu, 2, L),
+    |cpu| bit_hl(cpu, 2),
+    |cpu| bit_reg(cpu, 2, A),
+    |cpu| bit_reg(cpu, 3, B),
+    |cpu| bit_reg(cpu, 3, C),
+    |cpu| bit_reg(cpu, 3, D),
+    |cpu| bit_reg(cpu, 3, E),
+    |cpu| bit_reg(cpu, 3, H),
+    |cpu| bit_reg(cpu, 3, L),
+    |cpu| bit_hl(cpu, 3),
+    |cpu| bit_reg(cpu, 3, A),
+    |cpu| bit_reg(cpu, 4, B),
+    |cpu| bit_reg(cpu, 4, C),
+    |cpu| bit_reg(cpu, 4, D),
+    |cpu| bit_reg(cpu, 4, E),
+    |cpu| bit_reg(cpu, 4, H),
+    |cpu| bit_reg(cpu, 4, L),
+    |cpu| bit_hl(cpu, 4),
+    |cpu| bit_reg(cpu, 4, A),
+    |cpu| bit_reg(cpu, 5, B),
+    |cpu| bit_reg(cpu, 5, C),
+    |cpu| bit_reg(cpu, 5, D),
+    |cpu| bit_reg(cpu, 5, E),
+    |cpu| bit_reg(cpu, 5, H),
+    |cpu| bit_reg(cpu, 5, L),
+    |cpu| bit_hl(cpu, 5),
+    |cpu| bit_reg(cpu, 5, A),
+    |cpu| bit_reg(cpu, 6, B),
+    |cpu| bit_reg(cpu, 6, C),
+    |cpu| bit_reg(cpu, 6, D),
+    |cpu| bit_reg(cpu, 6, E),
+    |cpu| bit_reg(cpu, 6, H),
+    |cpu| bit_reg(cpu, 6, L),
+    |cpu| bit_hl(cpu, 6),
+    |cpu| bit_reg(cpu, 6, A),
+    |cpu| bit_reg(cpu, 7, B),
+    |cpu| bit_reg(cpu, 7, C),
+    |cpu| bit_reg(cpu, 7, D),
+    |cpu| bit_reg(cpu, 7, E),
+    |cpu| bit_reg(cpu, 7, H),
+    |cpu| bit_reg(cpu, 7, L),
+    |cpu| bit_hl(cpu, 7),
+    |cpu| bit_reg(cpu, 7, A),
     |cpu| bit_op_reg(res, cpu, 0, B),
     |cpu| bit_op_reg(res, cpu, 0, C),
     |cpu| bit_op_reg(res, cpu, 0, D),

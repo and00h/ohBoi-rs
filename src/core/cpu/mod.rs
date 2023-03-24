@@ -2,7 +2,9 @@ mod instructions;
 mod prefixed_insts;
 
 use std::cell::{Ref, RefCell};
+use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
+use log::debug;
 use crate::core::bus::{Bus, BusController};
 use crate::core::interrupts::{Interrupt, InterruptController};
 
@@ -15,10 +17,10 @@ pub(crate) enum Register8 {
 impl Register8 {
     pub fn from_word_reg(reg: Register16) -> (Self, Self) {
         match reg {
-            Register16::AF => (Self::A, Self::F),
-            Register16::BC => (Self::B, Self::C),
-            Register16::DE => (Self::D, Self::E),
-            Register16::HL => (Self::H, Self::L)
+            Register16::AF => (A, F),
+            Register16::BC => (B, C),
+            Register16::DE => (D, E),
+            Register16::HL => (H, L)
         }
     }
 }
@@ -44,10 +46,8 @@ pub(crate) struct Registers {
 
 use Register8::*;
 use Register16::*;
-use crate::core::cpu::instructions::{InstructionType, OPS};
+use crate::core::cpu::instructions::{InstArg, INSTRUCTIONS, InstructionType};
 use crate::core::cpu::prefixed_insts::PREFIXED_INSTS;
-
-use self::instructions::InstArg;
 
 impl Registers {
     pub fn new(cgb: bool) -> Self {
@@ -137,22 +137,50 @@ pub(crate) static INTERRUPT_VECTORS: [(Interrupt, u16); 5] = [
     (Interrupt::VBLANK, 0x60)
 ];
 
+#[derive(Debug, Copy, Clone)]
 pub(crate) enum CpuState {
-    Fetching,
+    Fetching { halt_bug: bool },
+    Decoding(u8),
+    Halting,
+    Halted,
     StartedExecution,
     ReadArg,
     ReadArgLo,
     ReadArgHi(u8),
     ALU16ReadHi,
     ALU16WriteHi(bool),
+    ALU16AddSPSignedLo(u8),
+    ALU16AddSPSignedHi(u8),
+    LoadHLSPOffset(u8),
     UpdatePC(u16),
+    BranchDecision,
+    Internal,
     ReadMemory(u16),
     ReadMemoryLo(u16),
     ReadMemoryHi(u16, u8),
     WriteMemory(u16, u8),
-    WriteMemoryLo(u16, u16),
-    WriteMemoryHi(u16, u16),
-    FinishedExecution
+    WriteMemoryLo(u16, u8),
+    WriteMemoryHi(u16, u8),
+    PushHi,
+    PushLo,
+    PopHi,
+    PopLo,
+    FinishedExecution,
+    EnablingInterrupts,
+    ServicingInterrupts,
+    InterruptWaitState1,
+    InterruptWaitState2,
+    InterruptPushPCLo,
+    InterruptPushPCHi,
+    InterruptUpdatePC
+}
+
+impl CpuState {
+    pub fn should_continue(&self) -> bool {
+        matches!(self, Self::Decoding(_)
+            | Self::StartedExecution | Self::FinishedExecution
+            | Self::EnablingInterrupts | Self::ServicingInterrupts | Self::Halting)
+    }
 }
 
 pub(crate) struct Cpu {
@@ -164,8 +192,10 @@ pub(crate) struct Cpu {
     pc: u16,
     sp: u16,
 
-    ei_last_instruction: bool,
-    halted: bool,
+    instruction: Option<fn(&mut Cpu)>,
+    instruction_arg: InstArg,
+
+    interrupts_to_handle: VecDeque<u16>,
     halt_bug_trigger: bool,
     double_speed: bool,
 
@@ -174,21 +204,29 @@ pub(crate) struct Cpu {
 }
 
 impl Cpu {
-    pub fn new(interrupt_controller: Rc<RefCell<InterruptController>>) -> Self {
-        unimplemented!()
-    }
-
-    pub fn set_bus(&mut self, bus: BusController) {
-        self.bus = bus;
+    pub fn new(interrupt_controller: Rc<RefCell<InterruptController>>, bus: BusController, cgb: bool) -> Self {
+        Self {
+            interrupt_controller,
+            bus,
+            state: CpuState::Fetching { halt_bug: false },
+            registers: Registers::new(cgb),
+            pc: 0x0100,
+            sp: 0xFFFE,
+            instruction: None,
+            instruction_arg: InstArg::None,
+            interrupts_to_handle: VecDeque::new(),
+            halt_bug_trigger: false,
+            double_speed: false,
+            cycles: 0,
+            cgb
+        }
     }
 
     pub fn reset(&mut self) {
         self.sp = 0xFFFE;
         self.pc = 0x0100;
-        self.state = CpuState::Fetching;
+        self.state = CpuState::Fetching { halt_bug: false };
 
-        self.ei_last_instruction = false;
-        self.halted = false;
         self.halt_bug_trigger = false;
         self.double_speed = false;
         self.cycles = 0;
@@ -196,197 +234,329 @@ impl Cpu {
         (*self.interrupt_controller).borrow_mut().reset();
     }
 
+    fn fetch(&mut self, halt_bug: bool) {
+        let opcode = self.bus.read(self.pc);
+        if !halt_bug { self.pc += 1; }
+        self.state = CpuState::Decoding(opcode);
+    }
+
+    fn decode(&mut self, opcode: u8) {
+        self.instruction = Some(INSTRUCTIONS[opcode as usize]);
+        self.state = CpuState::StartedExecution;
+    }
+
+    fn exec_inst(&mut self) {
+        if let Some(f) = self.instruction {
+            f(self);
+        } else {
+            panic!("No instruction to execute!");
+        }
+    }
+
+    fn handle_interrupts(&mut self) {
+        self.state =
+            match self.state {
+                CpuState::ServicingInterrupts => {
+                    if !self.interrupts_to_handle.is_empty() {
+                        CpuState::InterruptWaitState1
+                    } else {
+                        CpuState::Fetching { halt_bug: false }
+                    }
+                },
+                CpuState::InterruptWaitState1 => CpuState::InterruptWaitState2,
+                CpuState::InterruptWaitState2 => {
+                    self.sp -= 1;
+                    CpuState::InterruptPushPCHi
+                },
+                CpuState::InterruptPushPCHi => {
+                    self.bus.write(self.sp, (self.pc >> 8) as u8);
+                    self.sp -= 1;
+                    CpuState::InterruptPushPCLo
+                },
+                CpuState::InterruptPushPCLo => {
+                    self.bus.write(self.sp, (self.pc & 0xFF) as u8);
+                    CpuState::InterruptUpdatePC
+                },
+                CpuState::InterruptUpdatePC => {
+                    self.pc = self.interrupts_to_handle.pop_front().unwrap();
+                    if self.interrupts_to_handle.is_empty() {
+                        CpuState::Fetching { halt_bug: false }
+                    } else {
+                        CpuState::InterruptWaitState1
+                    }
+                }
+                _ => unreachable!()
+            }
+    }
+
+    fn advance(&mut self) {
+        use CpuState::*;
+        let old_state = self.state;
+        match self.state {
+            Fetching { halt_bug } => self.fetch(halt_bug),
+            Decoding(opcode) => self.decode(opcode),
+            StartedExecution => self.exec_inst(),
+            EnablingInterrupts => self.execute_ei(),
+            Halting => {
+                let i = (*self.interrupt_controller).borrow();
+                if i.ime {
+                    self.state = if i.interrupts_pending() { ServicingInterrupts } else { Halted };
+                } else if i.interrupts_pending() {
+                    self.state = Fetching { halt_bug: true }
+                } else {
+                    self.state = Halted;
+                }
+            },
+            Halted => {
+                if (*self.interrupt_controller).borrow().interrupts_pending() {
+                    self.state = ServicingInterrupts;
+                }
+            },
+            FinishedExecution => {
+                self.state = ServicingInterrupts
+            },
+            ServicingInterrupts => {
+                self.service_interrupts();
+                self.handle_interrupts();
+            },
+            InterruptWaitState1 | InterruptWaitState2
+            | InterruptPushPCHi | InterruptPushPCLo
+            | InterruptUpdatePC => self.handle_interrupts(),
+            state => {
+                if let Some(f) = self.instruction {
+                    f(self);
+                } else {
+                    panic!("State {:?} unhandled!", state);
+                }
+            }
+        }
+        debug!("{:?} => {:?}", old_state, self.state);
+    }
+
+    pub fn clock(&mut self) {
+        loop {
+            self.advance();
+            if !self.state.should_continue() { break }
+        }
+    }
+
+    fn execute_ei(&mut self) {
+        (*self.interrupt_controller).borrow_mut().ime = true;
+        self.state = CpuState::Fetching { halt_bug: false };
+    }
+
+    fn service_interrupts(&mut self) {
+        let mut interrupts = (*self.interrupt_controller).borrow_mut();
+        let pending = interrupts.interrupts_pending();
+        self.interrupts_to_handle = if interrupts.ime && pending {
+            interrupts.ime = false;
+            INTERRUPT_VECTORS.iter().filter_map(|(int, vector_addr)| {
+                if interrupts.is_enabled(*int) && interrupts.is_raised(*int) {
+                    interrupts.serve(*int);
+                    Some(*vector_addr)
+                } else {
+                    None
+                }
+            }).collect()
+        } else {
+            VecDeque::default()
+        }
+
+    }
+
+    // Instructions
+
     fn load_word_imm(&mut self, reg: Register16) {
         let (hi, lo) = Register8::from_word_reg(reg);
         self.state =
-        match self.state {
-            CpuState::StartedExecution => CpuState::ReadArgLo,
-            CpuState::ReadArgLo => {
-                self.registers.set_reg8(lo, self.bus.read(self.pc));
-                self.pc += 1;
-                CpuState::ReadArgHi(0)
-            },
-            CpuState::ReadArgHi(_) => {
-                self.registers.set_reg8(hi, self.bus.read(self.pc));
-                self.pc += 1;
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        };
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadArgLo,
+                CpuState::ReadArgLo => {
+                    self.registers.set_reg8(lo, self.bus.read(self.pc));
+                    self.pc += 1;
+                    CpuState::ReadArgHi(0)
+                },
+                CpuState::ReadArgHi(_) => {
+                    self.registers.set_reg8(hi, self.bus.read(self.pc));
+                    self.pc += 1;
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            };
     }
 
     fn load_word_sp(&mut self) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => CpuState::ReadArgLo,
-            CpuState::ReadArgLo => {
-                self.sp = (self.sp & 0xFF00) | self.bus.read(self.pc) as u16;
-                self.pc += 1;
-                CpuState::ReadArgHi(0xFF)
-            },
-            CpuState::ReadArgHi(_) => {
-                self.sp = ((self.bus.read(self.pc) as u16) << 8) | (self.sp & 0xFF);
-                self.pc += 1;
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadArgLo,
+                CpuState::ReadArgLo => {
+                    self.sp = (self.sp & 0xFF00) | self.bus.read(self.pc) as u16;
+                    self.pc += 1;
+                    CpuState::ReadArgHi(0xFF)
+                },
+                CpuState::ReadArgHi(_) => {
+                    self.sp = ((self.bus.read(self.pc) as u16) << 8) | (self.sp & 0xFF);
+                    self.pc += 1;
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
     fn inc_sp(&mut self) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => {
-                let (data, overflow) = ((self.sp & 0xFF) as u8).overflowing_add(1);
-                self.sp = (self.sp & 0xFF00) | data as u16;
-                CpuState::ALU16WriteHi(overflow)
-            },
-            CpuState::ALU16WriteHi(overflow) => {
-                if overflow {
-                    self.sp = self.sp.wrapping_add(0x100);
-                }
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+            match self.state {
+                CpuState::StartedExecution => {
+                    let (data, overflow) = ((self.sp & 0xFF) as u8).overflowing_add(1);
+                    self.sp = (self.sp & 0xFF00) | data as u16;
+                    CpuState::ALU16WriteHi(overflow)
+                },
+                CpuState::ALU16WriteHi(overflow) => {
+                    if overflow {
+                        self.sp = self.sp.wrapping_add(0x100);
+                    }
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
     fn dec_sp(&mut self) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => {
-                let (data, overflow) = ((self.sp & 0xFF) as u8).overflowing_sub(1);
-                self.sp = (self.sp & 0xFF00) | data as u16;
-                CpuState::ALU16WriteHi(overflow)
-            },
-            CpuState::ALU16WriteHi(overflow) => {
-                if overflow {
-                    self.sp = self.sp.wrapping_sub(0x100);
-                }
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+            match self.state {
+                CpuState::StartedExecution => {
+                    let (data, overflow) = ((self.sp & 0xFF) as u8).overflowing_sub(1);
+                    self.sp = (self.sp & 0xFF00) | data as u16;
+                    CpuState::ALU16WriteHi(overflow)
+                },
+                CpuState::ALU16WriteHi(overflow) => {
+                    if overflow {
+                        self.sp = self.sp.wrapping_sub(0x100);
+                    }
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
     fn inc_hl_indirect(&mut self) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(Register16::HL)),
-            CpuState::ReadMemory(addr) => {
-                let mut data = self.bus.read(addr).wrapping_add(1);
-                CpuState::WriteMemory(addr, data)
-            },
-            CpuState::WriteMemory(addr, data) => {
-                self.registers.set_flag_cond(CpuFlag::HalfCarry, (data & 0xF) == 0);
-                self.registers.set_flag_cond(CpuFlag::Zero, data == 0);
-                self.registers.reset_flag(CpuFlag::Sub);
-                
-                self.bus.write(addr, data);
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(HL)),
+                CpuState::ReadMemory(addr) => {
+                    let mut data = self.bus.read(addr).wrapping_add(1);
+                    CpuState::WriteMemory(addr, data)
+                },
+                CpuState::WriteMemory(addr, data) => {
+                    self.registers.set_flag_cond(CpuFlag::HalfCarry, (data & 0xF) == 0);
+                    self.registers.set_flag_cond(CpuFlag::Zero, data == 0);
+                    self.registers.reset_flag(CpuFlag::Sub);
+
+                    self.bus.write(addr, data);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
     fn dec_hl_indirect(&mut self) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(Register16::HL)),
-            CpuState::ReadMemory(addr) => {
-                let mut data = self.bus.read(addr).wrapping_sub(1);
-                CpuState::WriteMemory(addr, data)
-            },
-            CpuState::WriteMemory(addr, data) => {
-                self.registers.set_flag_cond(CpuFlag::HalfCarry, (data & 0xF) == 0xF);
-                self.registers.set_flag_cond(CpuFlag::Zero, data == 0);
-                self.registers.set_flag(CpuFlag::Sub);
-                self.bus.write(addr, data);
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(HL)),
+                CpuState::ReadMemory(addr) => {
+                    let mut data = self.bus.read(addr).wrapping_sub(1);
+                    CpuState::WriteMemory(addr, data)
+                },
+                CpuState::WriteMemory(addr, data) => {
+                    self.registers.set_flag_cond(CpuFlag::HalfCarry, (data & 0xF) == 0xF);
+                    self.registers.set_flag_cond(CpuFlag::Zero, data == 0);
+                    self.registers.set_flag(CpuFlag::Sub);
+                    self.bus.write(addr, data);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
     fn store_hl_immediate(&mut self) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => CpuState::ReadArg,
-            CpuState::ReadArg => {
-                let data = self.bus.read(self.pc);
-                self.pc += 1;
-                CpuState::WriteMemory(self.registers.get_reg16(Register16::HL), data)
-            },
-            CpuState::WriteMemory(addr, data) => {
-                self.bus.write(addr, data);
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadArg,
+                CpuState::ReadArg => {
+                    let data = self.bus.read(self.pc);
+                    self.pc += 1;
+                    CpuState::WriteMemory(self.registers.get_reg16(HL), data)
+                },
+                CpuState::WriteMemory(addr, data) => {
+                    self.bus.write(addr, data);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
     fn store_indirect(&mut self, reg: Register16) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => CpuState::WriteMemory(self.registers.get_reg16(reg), self.registers.get_reg8(Register8::A)),
-            CpuState::WriteMemory(addr, val) => {
-                self.bus.write(addr, val);
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+            match self.state {
+                CpuState::StartedExecution => CpuState::WriteMemory(self.registers.get_reg16(reg), self.registers.get_reg8(A)),
+                CpuState::WriteMemory(addr, val) => {
+                    self.bus.write(addr, val);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
     fn store_sp(&mut self) {
         self.state =
-        match self.state  {
-            CpuState::StartedExecution => CpuState::ReadArgLo,
-            CpuState::ReadArgLo => {
-                let lo = self.bus.read(self.pc);
-                self.pc += 1;
-                CpuState::ReadArgHi(lo)
-            },
-            CpuState::ReadArgHi(lo) => {
-                let hi = self.bus.read(self.pc);
-                self.pc += 1;
-                CpuState::WriteMemoryLo(((hi as u16) << 8) | (lo as u16), self.sp)
-            },
-            CpuState::WriteMemoryLo(addr, sp) => {
-                self.bus.write(addr, (sp & 0xFF) as u8);
-                CpuState::WriteMemoryHi(addr + 1, sp)
-            },
-            CpuState::WriteMemoryHi(addr, sp) => {
-                self.bus.write(addr, (sp >> 8) as u8);
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+            match self.state  {
+                CpuState::StartedExecution => CpuState::ReadArgLo,
+                CpuState::ReadArgLo => {
+                    let lo = self.bus.read(self.pc);
+                    self.pc += 1;
+                    CpuState::ReadArgHi(lo)
+                },
+                CpuState::ReadArgHi(lo) => {
+                    let hi = self.bus.read(self.pc);
+                    self.pc += 1;
+                    CpuState::WriteMemoryLo(((hi as u16) << 8) | (lo as u16), (self.sp & 0xFF) as u8)
+                },
+                CpuState::WriteMemoryLo(addr, sp) => {
+                    self.bus.write(addr, sp);
+                    CpuState::WriteMemoryHi(addr + 1, (self.sp >> 8) as u8)
+                },
+                CpuState::WriteMemoryHi(addr, sp) => {
+                    self.bus.write(addr, sp);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
     fn inc16(&mut self, reg: Register16) {
         let (hi, lo) = Register8::from_word_reg(reg);
         self.state =
-        match self.state {
-            CpuState::StartedExecution => {
-                let (data, overflow) = self.registers.get_reg8(lo).overflowing_add(1);
-                self.registers.set_reg8(lo, data);
-                CpuState::ALU16WriteHi(overflow)
-            },
-            CpuState::ALU16WriteHi(overflow) => {
-                if overflow {
-                    let data = self.registers.get_reg8(hi).wrapping_add(1);
-                    self.registers.set_reg8(hi, data);
-                }
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+            match self.state {
+                CpuState::StartedExecution => {
+                    let (data, overflow) = self.registers.get_reg8(lo).overflowing_add(1);
+                    self.registers.set_reg8(lo, data);
+                    CpuState::ALU16WriteHi(overflow)
+                },
+                CpuState::ALU16WriteHi(overflow) => {
+                    if overflow {
+                        let data = self.registers.get_reg8(hi).wrapping_add(1);
+                        self.registers.set_reg8(hi, data);
+                    }
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
     fn inc8(&mut self, reg: Register8) {
         let data = self.registers.get_reg8(reg);
 
-        self.registers.set_flag_cond(CpuFlag::HalfCarry, (data & 0xF) == 0);
+        self.registers.set_flag_cond(CpuFlag::HalfCarry, (data & 0xF) == 0xF);
         let (data, overflow) = data.overflowing_add(1);
 
         self.registers.set_flag_cond(CpuFlag::Zero, overflow);
@@ -408,101 +578,102 @@ impl Cpu {
 
     fn store_hl_inc(&mut self) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => CpuState::WriteMemory(self.registers.get_reg16(Register16::HL), self.registers.get_reg8(Register8::A)),
-            CpuState::WriteMemory(addr, val) => {
-                self.bus.write(addr, val);
-                self.registers.set_reg16(Register16::HL, addr + 1);
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+            match self.state {
+                CpuState::StartedExecution => CpuState::WriteMemory(self.registers.get_reg16(HL), self.registers.get_reg8(A)),
+                CpuState::WriteMemory(addr, val) => {
+                    self.bus.write(addr, val);
+                    self.registers.set_reg16(HL, addr + 1);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
     fn store_hl_dec(&mut self) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => CpuState::WriteMemory(self.registers.get_reg16(Register16::HL), self.registers.get_reg8(Register8::A)),
-            CpuState::WriteMemory(addr, val) => {
-                self.bus.write(addr, val);
-                self.registers.set_reg16(Register16::HL, addr - 1);
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+            match self.state {
+                CpuState::StartedExecution => CpuState::WriteMemory(self.registers.get_reg16(HL), self.registers.get_reg8(A)),
+                CpuState::WriteMemory(addr, val) => {
+                    self.bus.write(addr, val);
+                    self.registers.set_reg16(HL, addr - 1);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
     fn load_hl_inc(&mut self) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(Register16::HL)),
-            CpuState::ReadMemory(addr) => {
-                self.registers.set_reg8(Register8::A, self.bus.read(addr));
-                self.registers.set_reg16(Register16::HL, addr + 1);
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(HL)),
+                CpuState::ReadMemory(addr) => {
+                    self.registers.set_reg8(A, self.bus.read(addr));
+                    self.registers.set_reg16(HL, addr + 1);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
     fn load_hl_dec(&mut self) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(Register16::HL)),
-            CpuState::ReadMemory(addr) => {
-                self.registers.set_reg8(Register8::A, self.bus.read(addr));
-                self.registers.set_reg16(Register16::HL, addr - 1);
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(HL)),
+                CpuState::ReadMemory(addr) => {
+                    self.registers.set_reg8(A, self.bus.read(addr));
+                    self.registers.set_reg16(HL, addr - 1);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
-    
+
     fn store_hl_imm(&mut self) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => CpuState::ReadArg,
-            CpuState::ReadArg => {
-                let val = self.bus.read(self.pc);
-                self.pc += 1;
-                let addr = self.registers.get_reg16(Register16::HL);
-                CpuState::WriteMemory(addr, val)
-            },
-            CpuState::WriteMemory(addr, val) => {
-                self.bus.write(addr, val);
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadArg,
+                CpuState::ReadArg => {
+                    let val = self.bus.read(self.pc);
+                    self.pc += 1;
+                    let addr = self.registers.get_reg16(HL);
+                    CpuState::WriteMemory(addr, val)
+                },
+                CpuState::WriteMemory(addr, val) => {
+                    self.bus.write(addr, val);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
             }
-        }
     }
-    
+
     fn add_hl_sp(&mut self) {
-        let (hi, lo) = ((self.sp >> 8) as u8, (self.sp & 0xFF) as u8);
         self.state =
-        match self.state {
-            CpuState::StartedExecution => {
-                let hl = self.registers.get_reg16(Register16::HL);
+            match self.state {
+                CpuState::StartedExecution => {
+                    let hl = self.registers.get_reg16(HL);
 
-                self.registers.set_flag_cond(CpuFlag::HalfCarry, (hl & 0x0FFF) > (0x0FFFu16.wrapping_sub(self.sp & 0x0FFF)));
-                self.registers.set_flag_cond(CpuFlag::Carry, hl > (0xFFFFu16.wrapping_sub(self.sp)));
-                self.registers.reset_flag(CpuFlag::Sub);
+                    self.registers.set_flag_cond(CpuFlag::HalfCarry, (hl & 0x0FFF) > (0x0FFFu16.wrapping_sub(self.sp & 0x0FFF)));
+                    self.registers.set_flag_cond(CpuFlag::Carry, hl > (0xFFFFu16.wrapping_sub(self.sp)));
+                    self.registers.reset_flag(CpuFlag::Sub);
 
-                let (res, overflow) = self.registers.get_reg8(Register8::L).overflowing_add((self.sp & 0xFF) as u8);
+                    let (res, overflow) = self.registers.get_reg8(L).overflowing_add((self.sp & 0xFF) as u8);
 
-                self.registers.set_reg8(Register8::L, res);
-                CpuState::ALU16WriteHi(overflow)
-            },
-            CpuState::ALU16WriteHi(overflow) => {
-                let mut data = (self.sp & 0xFF) as u8;
-                if overflow { data += 1; }
+                    self.registers.set_reg8(L, res);
+                    CpuState::ALU16WriteHi(overflow)
+                },
+                CpuState::ALU16WriteHi(overflow) => {
+                    let mut data = (self.sp >> 8) as u8;
+                    if overflow { data = data.wrapping_add(1); }
 
-                self.registers.set_reg8(Register8::H, self.registers.get_reg8(hi).wrapping_add(data));
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+                    self.registers.set_reg8(H, self.registers.get_reg8(H).wrapping_add(data));
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
-    
-    fn zero_latency<F: FnMut(&mut Cpu)>(&mut self, f: F) {
+
+    fn zero_latency<F: FnMut(&mut Cpu)>(&mut self, mut f: F) {
         if let CpuState::StartedExecution = self.state {
             f(self);
             self.state = CpuState::FinishedExecution;
@@ -511,7 +682,7 @@ impl Cpu {
         }
     }
 
-    fn one_arg<F: FnMut(&mut Cpu, u8)>(&mut self, f: F) {
+    fn one_arg<F: FnMut(&mut Cpu, u8)>(&mut self, mut f: F) {
         self.state = match self.state {
             CpuState::StartedExecution => CpuState::ReadArgLo,
             CpuState::ReadArgLo => {
@@ -523,195 +694,31 @@ impl Cpu {
             _ => unreachable!()
         }
     }
-    
-    fn hl_src_reg_op<F: FnMut(&mut Cpu, u8)>(&mut self, f: F) {
+
+    fn hl_src_reg_op<F: FnMut(&mut Cpu, u8)>(&mut self, mut f: F) {
         self.state = match self.state {
-            CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(Register16::HL)),
+            CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(HL)),
             CpuState::ReadMemory(addr) => {
                 let data = self.bus.read(addr);
                 f(self, data);
                 CpuState::FinishedExecution
-            }
+            },
+            _ => unreachable!()
         }
     }
-    
-    fn hl_dst_reg_op<F: FnMut(&mut Cpu) -> u8>(&mut self, f: F) {
+
+    fn hl_dst_reg_op<F: FnMut(&mut Cpu) -> u8>(&mut self, mut f: F) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => CpuState::WriteMemory(self.registers.get_reg16(Register16::HL), f(self)),
-            CpuState::WriteMemory(addr, val) => {
-                self.bus.write(addr, val);
-                CpuState::FinishedExecution
+            match self.state {
+                CpuState::StartedExecution => CpuState::WriteMemory(self.registers.get_reg16(HL), f(self)),
+                CpuState::WriteMemory(addr, val) => {
+                    self.bus.write(addr, val);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
             }
-        }
     }
 
-    fn fetch(&mut self, halt_bug: bool) -> CpuState {
-        let opcode = self.bus.read(self.pc);
-        if !halt_bug { self.pc += 1; }
-        CpuState::Decoding { opcode }
-    }
-
-    fn decode(&mut self, opcode: u8) -> CpuState {
-        use InstructionType::*;
-
-        let op = &OPS[opcode as usize];
-        match op {
-            NoArgs(f) => CpuState::Execute { opcode, inst_arg: InstArg::None},
-            OneArg(f) => CpuState::ReadArg { opcode },
-            TwoArgs(f) => CpuState::ReadArgLo { opcode }
-        }
-    }
-
-    fn read_arg(&mut self, opcode: u8) -> CpuState {
-        let res = CpuState::Execute{ opcode, inst_arg: InstArg::Byte(self.bus.read(self.pc)) };
-        self.pc += 1;
-
-        res
-    }
-
-    fn read_arg_lo(&mut self, opcode: u8) -> CpuState {
-        let res = CpuState::ReadArgHi { opcode, lo: self.bus.read(self.pc) };
-        self.pc += 1;
-        res
-    }
-
-    fn read_arg_hi(&mut self, opcode: u8, lo: u8) -> CpuState {
-        let res = CpuState::Execute{ opcode, inst_arg: InstArg::Word((lo as u16) | ((self.bus.read(self.pc) as u16) << 8)) };
-        self.pc += 1;
-        res
-    }
-
-    fn execute(&mut self, opcode: u8, inst_arg: InstArg) -> CpuState {
-        let res
-    }
-
-    pub fn advance(&mut self) {
-        use CpuState::*;
-
-        self.state =
-        match self.state {
-            Fetching { halt_bug } => self.fetch(halt_bug),
-            Decoding { opcode } => self.decode(opcode),
-            ReadArg { opcode } => self.read_arg(opcode),
-            ReadArgLo { opcode } => self.read_arg_lo(opcode),
-            ReadArgHi { opcode, lo } => self.read_arg_hi(opcode, lo),
-            Execute { opcode, inst_arg } => self.execute(opcode, inst_arg),
-        }
-    }
-
-    pub fn step(&mut self) {
-        self.execute_ei();
-        //        self.io.lock().unwrap().check_timer_overflow();
-
-        if self.halted {
-            self.clock(4);
-        } else {
-            self.exec_next();
-        }
-
-        //        self.io.lock().unwrap().update_buttons();
-
-        for vec in self.service_interrupts() {
-            self.clock(8);
-            self.call(vec);
-        }
-    }
-
-    fn exec_next(&mut self) {
-        let opcode = self.read_memory(self.pc) as usize;
-        let op = &OPS[opcode];
-        if self.halt_bug_trigger {
-            self.halt_bug_trigger = false;
-        } else {
-            self.pc += 1;
-        }
-
-        match op {
-            InstructionType::NoArgs(f) => {
-                f(self);
-            }
-            InstructionType::OneArg(f) => {
-                let arg = self.read_memory(self.pc);
-                self.pc += 1;
-                f(self, arg);
-            }
-            InstructionType::TwoArgs(f) => {
-                let arg = self.read_word(self.pc);
-                self.pc += 2;
-                f(self, arg);
-            }
-        }
-    }
-
-    fn execute_ei(&mut self) {
-        if self.ei_last_instruction {
-            self.ei_last_instruction = false;
-            (*self.interrupt_controller).borrow_mut().ime = true;
-        }
-    }
-
-    fn clock(&mut self, cycles: u64) {
-        self.cycles += cycles;
-        self.bus.advance(cycles);
-    }
-
-    fn service_interrupts(&mut self) -> Vec<u16> {
-        let mut interrupts = (*self.interrupt_controller).borrow_mut();
-        let pending = interrupts.interrupts_pending();
-        if interrupts.ime && pending {
-            self.halted = false;
-            // if self.halted {
-            //     self.halted = false;
-            // }
-            interrupts.ime = false;
-            INTERRUPT_VECTORS.iter().filter_map(|(int, vector_addr)| {
-                if interrupts.is_enabled(*int) && interrupts.is_raised(*int) {
-                    interrupts.serve(*int);
-                    Some(*vector_addr)
-                } else {
-                    None
-                }
-            }).collect()
-        } else {
-            Vec::default()
-        }
-
-    }
-
-    fn read_memory(&mut self, addr: u16) -> u8 {
-        self.clock(4);
-        self.bus.read(addr)
-    }
-
-    fn write_memory(&mut self, addr: u16, data: u8) {
-        self.clock(4);
-        self.bus.write(addr, data);
-    }
-
-    #[inline]
-    fn read_word(&mut self, addr: u16) -> u16 {
-        (self.read_memory(addr) as u16) | ((self.read_memory(addr + 1) as u16) << 8)
-    }
-
-    #[inline]
-    fn store_word(&mut self, addr: u16, data: u16) {
-        self.write_memory(addr, (data & 0xFF) as u8);
-        self.write_memory(addr + 1, ((data & 0xFF00) >> 8) as u8);
-    }
-
-    fn stack_pop(&mut self) -> u16 {
-        let res = self.read_word(self.sp);
-        self.sp = self.sp.wrapping_add(2);
-        res
-    }
-
-    fn stack_push(&mut self, data: u16) {
-        self.sp = self.sp.wrapping_sub(2);
-        self.store_word(self.sp, data);
-    }
-
-    // Instructions
     fn adc(&mut self, val: u8) {
         let a = self.registers.get_reg8(A);
         let carry = if self.registers.test_flag(CpuFlag::Carry) {
@@ -719,15 +726,16 @@ impl Cpu {
         } else {
             0
         };
-        let res = a as u16 + val as u16 + carry as u16;
+        let (res, overflow1) = a.overflowing_add(val);
+        let (res, overflow2) = res.overflowing_add(carry);
 
-        self.registers.set_flag_cond(CpuFlag::Carry, res > 0xFF);
+        self.registers.set_flag_cond(CpuFlag::Carry, overflow1 || overflow2);
         self.registers
             .set_flag_cond(CpuFlag::HalfCarry, (a & 0xF) + (val & 0xF) + carry > 0xF);
         self.registers.set_flag_cond(CpuFlag::Zero, res == 0);
         self.registers.reset_flag(CpuFlag::Sub);
 
-        self.registers.set_reg8(A, res as u8);
+        self.registers.set_reg8(A, res);
     }
 
     fn add(&mut self, val: u8) {
@@ -748,41 +756,27 @@ impl Cpu {
         self.state =
         match self.state {
             CpuState::StartedExecution => {
-                let hl = self.registers.get_reg16(Register16::HL);
+                let hl = self.registers.get_reg16(HL);
                 let data = self.registers.get_reg16(reg);
 
                 self.registers.set_flag_cond(CpuFlag::HalfCarry, (hl & 0x0FFF) > (0x0FFFu16.wrapping_sub(data & 0x0FFF)));
                 self.registers.set_flag_cond(CpuFlag::Carry, hl > (0xFFFFu16.wrapping_sub(data)));
                 self.registers.reset_flag(CpuFlag::Sub);
 
-                let (res, overflow) = self.registers.get_reg8(Register8::L).overflowing_add(self.registers.get_reg8(lo));
+                let (res, overflow) = self.registers.get_reg8(L).overflowing_add(self.registers.get_reg8(lo));
 
-                self.registers.set_reg8(Register8::L, res);
+                self.registers.set_reg8(L, res);
                 CpuState::ALU16WriteHi(overflow)
             },
             CpuState::ALU16WriteHi(overflow) => {
                 let mut data = self.registers.get_reg8(hi);
-                if overflow { data += 1; }
+                if overflow { data = data.wrapping_add(1); }
 
-                self.registers.set_reg8(Register8::H, self.registers.get_reg8(hi).wrapping_add(data));
+                self.registers.set_reg8(H, self.registers.get_reg8(H).wrapping_add(data));
                 CpuState::FinishedExecution
             },
             _ => unreachable!()
         }
-    }
-
-    fn add_sp(&mut self, imm: u8) {
-        let sign_ext_imm = (imm as i8) as u16;
-        self.registers.set_flag_cond(
-            CpuFlag::HalfCarry,
-            (self.sp & 0xF) as u8 > (0xF - (imm & 0xF)),
-        );
-        self.registers
-            .set_flag_cond(CpuFlag::Carry, self.sp as u8 > 0xFF - imm);
-        self.sp = self.sp.wrapping_add(sign_ext_imm);
-        self.registers.reset_flag(CpuFlag::Zero);
-        self.registers.reset_flag(CpuFlag::Sub);
-        self.clock(8);
     }
 
     fn and(&mut self, val: u8) {
@@ -796,20 +790,20 @@ impl Cpu {
         self.registers.set_reg8(A, res);
     }
 
-    fn call(&mut self, addr: u16) {
-        self.stack_push(self.pc);
-        self.pc = addr;
-        self.clock(4);
-    }
-
-    fn callc(&mut self, addr: u16, cond: CpuFlag, negate: bool) {
-        if self.registers.test_flag(cond) ^ negate {
-            self.call(addr);
+    fn cb(&mut self) {
+        self.state = match self.state {
+            CpuState::StartedExecution => CpuState::ReadArg,
+            CpuState::ReadArg => {
+                let arg = self.bus.read(self.pc);
+                self.pc += 1;
+                self.instruction_arg = InstArg::Byte(arg);
+                PREFIXED_INSTS[arg as usize](self)
+            },
+            _ => {
+                let arg = self.instruction_arg.lo();
+                PREFIXED_INSTS[arg as usize](self)
+            }
         }
-    }
-
-    fn cb(&mut self, data: u8) {
-        PREFIXED_INSTS[data as usize](self);
     }
 
     fn ccf(&mut self) {
@@ -840,24 +834,29 @@ impl Cpu {
         let mut val = self.registers.get_reg8(A) as u32;
         if self.registers.test_flag(CpuFlag::Sub) {
             if self.registers.test_flag(CpuFlag::HalfCarry) {
-                val = (val - 6) & 0xFF;
+                val = (val.wrapping_sub(6)) & 0xFF;
             }
             if self.registers.test_flag(CpuFlag::Carry) {
-                val = (val - 0x60) & 0xFF;
+                val = (val.wrapping_sub(0x60)) & 0xFF;
             }
         } else {
             if self.registers.test_flag(CpuFlag::HalfCarry) || (val & 0xF) > 9 {
-                val += 0x06;
+                val = val.wrapping_add(0x06);
             }
             if self.registers.test_flag(CpuFlag::Carry) || val > 0x9F {
-                val += 0x60;
+                val = val.wrapping_add(0x60);
             }
         }
 
         self.registers.reset_flag(CpuFlag::HalfCarry);
-        self.registers.set_flag_cond(CpuFlag::Carry, val > 0xFF);
+        self.registers.reset_flag(CpuFlag::Zero);
+        if val > 0xFF {
+            self.registers.set_flag(CpuFlag::Carry);
+        }
         val &= 0xFF;
-        self.registers.set_flag_cond(CpuFlag::Zero, val == 0);
+        if val == 0 {
+            self.registers.set_flag(CpuFlag::Zero);
+        }
         self.registers.set_reg8(A, val as u8);
     }
 
@@ -878,40 +877,7 @@ impl Cpu {
                 CpuState::FinishedExecution
             },
             _ => unreachable!()
-        }
-        let data = self.registers.get_reg16(reg).wrapping_sub(1);
-        self.registers.set_reg16(reg, data);
-    }
-
-//    fn dec8(&mut self, reg: Register8) {
-//        let mut data = self.registers.get_reg8(reg);
-//
-//        self.registers
-//            .set_flag_cond(CpuFlag::HalfCarry, (data & 0xF) == 0);
-//        data = data.wrapping_sub(1);
-//
-//        self.registers.set_flag_cond(CpuFlag::Zero, data == 0);
-//        self.registers.set_flag(CpuFlag::Sub);
-//
-//        self.registers.set_reg8(reg, data);
-//    }
-
-    fn dec_hl(&mut self) {
-        let addr = self.registers.get_reg16(HL);
-        let data = self.read_memory(addr);
-
-        self.registers
-            .set_flag_cond(CpuFlag::HalfCarry, (data & 0xF) != 0);
-        let decremented = data.wrapping_sub(1);
-        self.registers.set_flag_cond(CpuFlag::Zero, decremented == 0);
-        self.registers.set_flag(CpuFlag::Sub);
-
-        self.write_memory(addr, decremented);
-    }
-
-    fn dec_sp(&mut self) {
-        self.clock(4);
-        self.sp = self.sp.wrapping_sub(1);
+        };
     }
 
     fn di(&mut self) {
@@ -919,112 +885,398 @@ impl Cpu {
     }
 
     fn ei(&mut self) {
-        self.ei_last_instruction = true;
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => CpuState::EnablingInterrupts,
+                _ => unreachable!()
+            };
     }
 
     fn halt(&mut self) {
-        let interrupts = (*self.interrupt_controller).borrow();
-        if interrupts.ime {
-            self.halted = true;
-        } else {
-            if interrupts.interrupts_pending() {
-                self.halt_bug_trigger = true;
-            } else {
-                self.halted = true;
-            }
+        if matches!(self.state, CpuState::StartedExecution) {
+            self.state = CpuState::Halting
         }
     }
 
-//    fn inc16(&mut self, reg: Register16) {
-//        self.clock(4);
-//        let data = self.registers.get_reg16(reg).wrapping_add(1);
-//        self.registers.set_reg16(reg, data);
-//    }
-
-//    fn inc8(&mut self, reg: Register8) {
-//        let mut data = self.registers.get_reg8(reg);
-//
-//        self.registers
-//            .set_flag_cond(CpuFlag::HalfCarry, (data & 0xF) == 0);
-//        data = data.wrapping_add(1);
-//
-//        self.registers.set_flag_cond(CpuFlag::Zero, data == 0);
-//        self.registers.reset_flag(CpuFlag::Sub);
-//        self.registers.set_reg8(reg, data);
-//    }
-
-    fn inc_hl(&mut self) {
-        let addr = self.registers.get_reg16(HL);
-        let data = self.read_memory(addr);
-
-        self.registers
-            .set_flag_cond(CpuFlag::HalfCarry, (data & 0xF) == 0xF);
-        let incremented = data.wrapping_add(1);
-
-        self.registers.set_flag_cond(CpuFlag::Zero, incremented == 0);
-        self.registers.reset_flag(CpuFlag::Sub);
-
-        self.write_memory(addr, incremented);
-    }
-
-    fn inc_sp(&mut self) {
-        self.clock(4);
-        self.sp = self.sp.wrapping_add(1);
-    }
-
-    fn jp(&mut self, addr: u16) {
-        self.pc = addr;
-        self.clock(4);
-    }
-
-    fn jpc(&mut self, addr: u16, cond: CpuFlag, negate: bool) {
-        if self.registers.test_flag(cond) ^ negate {
-            self.jp(addr);
-        }
-    }
-
-    fn jump_rel_conditional(&mut self, condition: bool) {
+    fn jump_rel(&mut self, condition: bool) {
         self.state =
-        match self.state {
-            CpuState::StartedExecution => CpuState::ReadArg,
-            CpuState::ReadArg => {
-                let offset = self.bus.read(self.pc) as i8;
-                self.pc += 1;
-                if condition {
-                    CpuState::UpdatePC(self.pc.wrapping_add(offset as u16))
-                } else {
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadArg,
+                CpuState::ReadArg => {
+                    let offset = self.bus.read(self.pc) as i8;
+                    self.pc += 1;
+                    if condition {
+                        CpuState::UpdatePC(self.pc.wrapping_add(offset as u16))
+                    } else {
+                        CpuState::FinishedExecution
+                    }
+                },
+                CpuState::UpdatePC(new_pc) => {
+                    self.pc = new_pc;
                     CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
+    }
+
+    fn jump_rel_conditional(&mut self, flag: CpuFlag, negate: bool) {
+        let condition = self.registers.test_flag(flag) ^ negate;
+        self.jump_rel(condition);
+    }
+
+    fn jump(&mut self, condition: bool) {
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadArgLo,
+                CpuState::ReadArgLo => {
+                    let lo = self.bus.read(self.pc);
+                    self.pc += 1;
+                    CpuState::ReadArgHi(lo)
+                },
+                CpuState::ReadArgHi(lo) => {
+                    let addr = ((self.bus.read(self.pc) as u16) << 8) | (lo as u16);
+                    self.pc += 1;
+                    if condition {
+                        CpuState::UpdatePC(addr)
+                    } else {
+                        CpuState::FinishedExecution
+                    }
+                },
+                CpuState::UpdatePC(addr) => { self.pc = addr; CpuState::FinishedExecution },
+                _ => unreachable!()
+            };
+    }
+
+    fn jump_conditional(&mut self, flag: CpuFlag, negate: bool) {
+        let condition = self.registers.test_flag(flag) ^ negate;
+        self.jump(condition);
+    }
+
+    fn ret(&mut self, condition: bool) {
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => CpuState::BranchDecision,
+                CpuState::BranchDecision => {
+                    if condition {
+                        CpuState::ReadMemoryLo(self.sp)
+                    } else {
+                        CpuState::FinishedExecution
+                    }
+                },
+                CpuState::ReadMemoryLo(addr) => {
+                    let pc_lo = self.bus.read(addr);
+                    self.sp += 1;
+                    CpuState::ReadMemoryHi(self.sp, pc_lo)
+                },
+                CpuState::ReadMemoryHi(addr, pc_lo) => {
+                    let new_pc = ((self.bus.read(addr) as u16) << 8) | (pc_lo as u16);
+                    self.sp += 1;
+                    CpuState::UpdatePC(new_pc)
+                },
+                CpuState::UpdatePC(new_pc) => {
+                    self.pc = new_pc;
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
+    }
+
+    fn ret_conditional(&mut self, flag: CpuFlag, negate: bool) {
+        let condition = self.registers.test_flag(flag) ^ negate;
+        self.ret(condition);
+    }
+
+    fn reti(&mut self) {
+        self.ret(true);
+        if let CpuState::FinishedExecution = self.state {
+            (*self.interrupt_controller).borrow_mut().ime = true;
+        }
+    }
+
+    fn pop(&mut self, reg: Register16) {
+        let (hi, lo) = Register8::from_word_reg(reg);
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => CpuState::PopLo,
+                CpuState::PopLo => {
+                    self.registers.set_reg8(lo, self.bus.read(self.sp));
+                    self.sp += 1;
+                    CpuState::PopHi
+                },
+                CpuState::PopHi => {
+                    self.registers.set_reg8(hi, self.bus.read(self.sp));
+                    self.sp += 1;
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
+    }
+
+    fn push(&mut self, reg: Register16) {
+        let (hi, lo) = Register8::from_word_reg(reg);
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => CpuState::Internal,
+                CpuState::Internal => {
+                    self.sp -= 1;
+                    CpuState::PushHi
+                },
+                CpuState::PushHi => {
+                    self.bus.write(self.sp, self.registers.get_reg8(hi));
+                    self.sp -= 1;
+                    CpuState::PushLo
+                },
+                CpuState::PushLo => {
+                    self.bus.write(self.sp, self.registers.get_reg8(lo));
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
+    }
+
+    fn rst(&mut self, addr: u16) {
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => CpuState::Internal,
+                CpuState::Internal => {
+                    self.sp -= 1;
+                    CpuState::PushHi
                 }
-            },
-            CpuState::UpdatePC(new_pc) => {
-                self.pc = new_pc;
-                CpuState::FinishedExecution
-            },
-            _ => unreachable!()
-        }
+                CpuState::PushHi => {
+                    self.bus.write(self.sp, (self.pc >> 8) as u8);
+                    self.sp -= 1;
+                    CpuState::PushLo
+                },
+                CpuState::PushLo => {
+                    self.bus.write(self.sp, (self.pc & 0xFF) as u8);
+                    self.pc = addr;
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
-    fn jr(&mut self, offset: u8) {
-        let offset = offset as i8;
-        // This works, since Rust sign-extends when converting from a smaller signed integer
-        // to a larger unsigned integer
-        self.pc = self.pc.wrapping_add(offset as u16);
-        self.clock(4);
+    fn call(&mut self, condition: bool) {
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadArgLo,
+                CpuState::ReadArgLo => {
+                    let lo = self.bus.read(self.pc);
+                    self.pc += 1;
+                    CpuState::ReadArgHi(lo)
+                },
+                CpuState::ReadArgHi(lo) => {
+                    self.instruction_arg = InstArg::Word(self.bus.read(self.pc), lo);
+                    self.pc += 1;
+                    if condition {
+                        CpuState::Internal
+                    } else {
+                        CpuState::FinishedExecution
+                    }
+                },
+                CpuState::Internal => {
+                    self.sp -= 1;
+                    CpuState::PushHi
+                },
+                CpuState::PushHi => {
+                    self.bus.write(self.sp, (self.pc >> 8) as u8);
+                    self.sp -= 1;
+                    CpuState::PushLo
+                },
+                CpuState::PushLo => {
+                    self.bus.write(self.sp, (self.pc & 0xFF) as u8);
+                    self.pc = self.instruction_arg.build_word();
+
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
-    fn jrc(&mut self, addr: u8, flag: CpuFlag, negate: bool) {
-        if self.registers.test_flag(flag) ^ negate {
-            self.jr(addr);
-        }
+    fn call_conditional(&mut self, flag: CpuFlag, negate: bool) {
+        let condition = self.registers.test_flag(flag) ^ negate;
+        self.call(condition);
     }
 
-    fn load(&mut self, reg: Register8, addr: u16) {
-        let data = self.read_memory(addr);
-        self.registers.set_reg8(reg, data);
+    fn store_highmem_immediate(&mut self) {
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadArg,
+                CpuState::ReadArg => {
+                    let arg = self.bus.read(self.pc) as u16;
+                    self.pc += 1;
+                    CpuState::WriteMemory(0xFF00 + arg, self.registers.get_reg8(A))
+                },
+                CpuState::WriteMemory(addr, val) => {
+                    self.bus.write(addr, val);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            };
     }
 
-    fn load_immediate(&mut self, reg: Register8, data: u8) {
-        self.registers.set_reg8(reg, data);
+    fn store_highmem_reg(&mut self) {
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => {
+                    let offset = self.registers.get_reg8(C) as u16;
+                    CpuState::WriteMemory(0xFF00 + offset, self.registers.get_reg8(A))
+                },
+                CpuState::WriteMemory(addr, val) => {
+                    self.bus.write(addr, val);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            };
+    }
+
+    fn load_highmem_immediate(&mut self) {
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadArg,
+                CpuState::ReadArg => {
+                    let arg = self.bus.read(self.pc) as u16;
+                    self.pc += 1;
+                    CpuState::ReadMemory(0xFF00 + arg)
+                },
+                CpuState::ReadMemory(addr) => {
+                    self.registers.set_reg8(A, self.bus.read(addr));
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            };
+    }
+
+    fn load_highmem_reg(&mut self) {
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => {
+                    let offset = self.registers.get_reg8(C) as u16;
+                    CpuState::ReadMemory(0xFF00 + offset)
+                },
+                CpuState::ReadMemory(addr) => {
+                    self.registers.set_reg8(A, self.bus.read(addr));
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            };
+    }
+
+    fn store_accumulator(&mut self) {
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadArgLo,
+                CpuState::ReadArgLo => {
+                    let lo = self.bus.read(self.pc);
+                    self.pc += 1;
+                    CpuState::ReadArgHi(lo)
+                },
+                CpuState::ReadArgHi(lo) => {
+                    let addr = ((self.bus.read(self.pc) as u16) << 8) | (lo as u16);
+                    self.pc += 1;
+                    CpuState::WriteMemory(addr, self.registers.get_reg8(A))
+                },
+                CpuState::WriteMemory(addr, val) => {
+                    self.bus.write(addr, val);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
+    }
+
+    fn load_accumulator(&mut self) {
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadArgLo,
+                CpuState::ReadArgLo => {
+                    let lo = self.bus.read(self.pc);
+                    self.pc += 1;
+                    CpuState::ReadArgHi(lo)
+                },
+                CpuState::ReadArgHi(lo) => {
+                    let addr = ((self.bus.read(self.pc) as u16) << 8) | (lo as u16);
+                    self.pc += 1;
+                    CpuState::ReadMemory(addr)
+                },
+                CpuState::ReadMemory(addr) => {
+                    self.registers.set_reg8(A, self.bus.read(addr));
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
+    }
+
+    fn add_sp(&mut self) {
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadArg,
+                CpuState::ReadArg => {
+                    let arg = self.bus.read(self.pc);
+                    self.pc += 1;
+                    CpuState::ALU16AddSPSignedLo(arg)
+                },
+                CpuState::ALU16AddSPSignedLo(arg) => {
+                    let sign_ext_imm = (arg as i8) as u16;
+                    self.registers.set_flag_cond(
+                        CpuFlag::HalfCarry,
+                        (self.sp & 0xF) as u8 > (0xF - (arg & 0xF)),
+                    );
+                    self.registers
+                        .set_flag_cond(CpuFlag::Carry, self.sp as u8 > 0xFF - arg);
+                    let res = self.sp.wrapping_add(sign_ext_imm);
+                    self.sp = (self.sp & 0xFF00) | (res & 0xFF);
+                    self.registers.reset_flag(CpuFlag::Zero);
+                    self.registers.reset_flag(CpuFlag::Sub);
+                    CpuState::ALU16AddSPSignedHi((res >> 8) as u8)
+                },
+                CpuState::ALU16AddSPSignedHi(hi) => {
+                    self.sp = ((hi as u16) << 8) | (self.sp & 0xFF);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
+    }
+
+    fn ldhl_sp_offset(&mut self) {
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => CpuState::ReadArg,
+                CpuState::ReadArg => {
+                    let arg = self.bus.read(self.pc);
+                    self.pc += 1;
+                    CpuState::LoadHLSPOffset(arg)
+                },
+                CpuState::LoadHLSPOffset(offset) => {
+                    let sign_ext_imm = (offset as i8) as u16;
+                    self.registers.set_flag_cond(
+                        CpuFlag::HalfCarry,
+                        (self.sp & 0xF) as u8 > (0xF - (offset & 0xF)),
+                    );
+                    self.registers
+                        .set_flag_cond(CpuFlag::Carry, self.sp as u8 > 0xFF - offset);
+                    let res = self.sp.wrapping_add(sign_ext_imm);
+                    self.registers.reset_flag(CpuFlag::Zero);
+                    self.registers.reset_flag(CpuFlag::Sub);
+                    self.registers.set_reg16(HL, res);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
+    }
+
+    fn ld_sp_hl(&mut self) {
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => {
+                    self.sp = (self.sp & 0xFF00) | (self.registers.get_reg8(L) as u16);
+                    CpuState::Internal
+                },
+                CpuState::Internal => {
+                    self.sp = ((self.registers.get_reg8(H) as u16) << 8) | (self.sp & 0xFF);
+                    CpuState::FinishedExecution
+                },
+                _ => unreachable!()
+            }
     }
 
     fn load_indirect(&mut self, reg: Register8, src: Register16) {
@@ -1032,67 +1284,13 @@ impl Cpu {
         match self.state {
             CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(src)),
             CpuState::ReadMemory(addr) => {
-                self.registers.set_reg8(Register8::A, self.bus.read(addr));
+                self.registers.set_reg8(A, self.bus.read(addr));
                 CpuState::FinishedExecution
             },
             _ => unreachable!()
         };
     }
 
-    fn ldc_out(&mut self) {
-        self.write_memory(
-            0xFF00 + self.registers.get_reg8(C) as u16,
-            self.registers.get_reg8(A),
-        );
-    }
-
-    fn ldhl(&mut self, offset: i8) {
-        self.clock(4);
-        let res = self.sp.wrapping_add(offset as u16);
-        if offset >= 0 {
-            self.registers.set_flag_cond(
-                CpuFlag::Carry,
-                (self.sp & 0xFF).wrapping_add(offset as u16) > 0xFF,
-            );
-            self.registers.set_flag_cond(
-                CpuFlag::HalfCarry,
-                (self.sp & 0xF).wrapping_add((offset & 0xF) as u16) > 0xF,
-            );
-        } else {
-            self.registers
-                .set_flag_cond(CpuFlag::Carry, (res & 0xFF) <= (self.sp & 0xFF));
-            self.registers
-                .set_flag_cond(CpuFlag::HalfCarry, (res & 0xF) <= (self.sp & 0xF));
-        }
-
-        self.registers.reset_flag(CpuFlag::Zero);
-        self.registers.reset_flag(CpuFlag::Sub);
-
-        self.registers.set_reg16(HL, res);
-    }
-
-    fn ldh_in(&mut self, offset: u8) {
-        let data = self.read_memory(0xFF00 + offset as u16);
-        self.registers.set_reg8(A, data);
-    }
-
-    fn ldc_in(&mut self) {
-        let data = self.read_memory(0xFF00 + self.registers.get_reg8(C) as u16);
-        self.registers.set_reg8(A, data);
-    }
-
-    fn ldh_out(&mut self, offset: u8) {
-        self.write_memory(0xFF00 + offset as u16, self.registers.get_reg8(A));
-    }
-
-    fn ldsphl(&mut self) {
-        self.clock(4);
-        self.sp = self.registers.get_reg16(HL);
-    }
-
-    fn load_word(&mut self, reg: Register16, data: u16) {
-        self.registers.set_reg16(reg, data);
-    }
 
     fn or(&mut self, val: u8) {
         let res = self.registers.get_reg8(A) | val;
@@ -1103,33 +1301,6 @@ impl Cpu {
         self.registers.reset_flag(CpuFlag::Carry);
 
         self.registers.set_reg8(A, res);
-    }
-
-    fn poop(&mut self, reg: Register16) {
-        let data = self.stack_pop();
-        self.registers.set_reg16(reg, data);
-    }
-
-    fn poosh(&mut self, reg: Register16) {
-        self.clock(4);
-        let data = self.registers.get_reg16(reg);
-        self.stack_push(data);
-    }
-
-    fn ret(&mut self) {
-        self.pc = self.stack_pop();
-        self.clock(4);
-    }
-
-    fn retc(&mut self, cond: CpuFlag, negate: bool) {
-        if self.registers.test_flag(cond) ^ negate {
-            self.ret();
-        }
-    }
-
-    fn reti(&mut self) {
-        self.ret();
-        (*self.interrupt_controller).borrow_mut().ime = true;
     }
 
     fn rla(&mut self) {
@@ -1162,38 +1333,28 @@ impl Cpu {
     }
 
     fn rra(&mut self) {
-        if let CpuState::StartedExecution = self.state {
-            self.registers.reset_flag(CpuFlag::Zero);
-            self.registers.reset_flag(CpuFlag::Sub);
-            self.registers.reset_flag(CpuFlag::HalfCarry);
+        self.registers.reset_flag(CpuFlag::Zero);
+        self.registers.reset_flag(CpuFlag::Sub);
+        self.registers.reset_flag(CpuFlag::HalfCarry);
 
-            let c = if self.registers.test_flag(CpuFlag::Carry) { 1 << 7 } else { 0 };
-            let mut a = self.registers.get_reg8(A);
+        let c = if self.registers.test_flag(CpuFlag::Carry) { 1 << 7 } else { 0 };
+        let mut a = self.registers.get_reg8(A);
 
-            self.registers.set_flag_cond(CpuFlag::Carry, (a & 1) == 1);
+        self.registers.set_flag_cond(CpuFlag::Carry, (a & 1) == 1);
 
-            a >>= 1;
-            a |= c;
-            self.registers.set_reg8(A, a);
-
-            self.state = CpuState::FinishedExecution;
-        } else {
-            unreachable!()
-        }
+        a >>= 1;
+        a |= c;
+        self.registers.set_reg8(A, a);
     }
 
     fn rrca(&mut self) {
-        if let CpuState::StartedExecution = self.state {
-        	let a = self.registers.get_reg8(A);
-            self.registers.set_reg8(A, a.rotate_right(1));
+        let a = self.registers.get_reg8(A);
+        self.registers.set_reg8(A, a.rotate_right(1));
 
-            self.registers.reset_flag(CpuFlag::Zero);
-            self.registers.reset_flag(CpuFlag::Sub);
-            self.registers.reset_flag(CpuFlag::HalfCarry);
-            self.registers.set_flag_cond(CpuFlag::Carry, (a & 0x80) == 0x80);
-        } else {
-            unreachable!()
-        }
+        self.registers.reset_flag(CpuFlag::Zero);
+        self.registers.reset_flag(CpuFlag::Sub);
+        self.registers.reset_flag(CpuFlag::HalfCarry);
+        self.registers.set_flag_cond(CpuFlag::Carry, (a & 1) == 1);
     }
 
 
@@ -1224,17 +1385,8 @@ impl Cpu {
     }
 
     fn stop(&mut self) {
-        todo!()
-    }
 
-    fn store(&mut self, reg: Register8, addr: u16) {
-        self.write_memory(addr, self.registers.get_reg8(reg));
     }
-
-//    fn store_indirect(&mut self, reg: Register8, dst: Register16) {
-//        let addr = self.registers.get_reg16(dst);
-//        self.store(reg, addr);
-//    }
 
     fn sub(&mut self, val: u8) {
         let a = self.registers.get_reg8(A);
@@ -1245,11 +1397,7 @@ impl Cpu {
         self.registers.set_flag_cond(CpuFlag::Carry, val > a);
         self.registers.set_flag(CpuFlag::Sub);
 
-        self.registers.set_reg8(A, a - val);
-    }
-
-    fn sw(&mut self, reg: Register16, addr: u16) {
-        self.store_word(addr, self.registers.get_reg16(reg))
+        self.registers.set_reg8(A, a.wrapping_sub(val));
     }
 
     fn xor(&mut self, val: u8) {
