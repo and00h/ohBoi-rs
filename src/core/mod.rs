@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use crate::core::bus::Bus;
 use crate::core::cpu::Cpu;
+use crate::core::gpu::{Ppu, PpuState};
 use crate::core::interrupts::InterruptController;
 use crate::core::joypad::Joypad;
 use crate::core::memory::cartridge::Cartridge;
@@ -17,13 +18,16 @@ mod timers;
 mod bus;
 pub mod cpu;
 mod memory;
+mod gpu;
 
 pub struct GameBoy {
     bus: Rc<RefCell<Bus>>,
     cpu: Rc<RefCell<Cpu>>,
+    ppu: Rc<RefCell<Ppu>>,
     dma: Rc<RefCell<DmaController>>,
     timer: Rc<RefCell<Timer>>,
-    cartridge: Rc<RefCell<Cartridge>>
+    cartridge: Rc<RefCell<Cartridge>>,
+    cycle_counter: u64
 }
 
 impl GameBoy {
@@ -36,7 +40,9 @@ impl GameBoy {
         let timer = Rc::new(RefCell::new(Timer::new(Rc::clone(&interrupts))));
         let joypad = Rc::new(RefCell::new(Joypad::new(Rc::clone(&interrupts))));
 
-        let bus = Bus::new(Rc::clone(&timer), Rc::clone(&joypad),
+        let ppu = Rc::new(RefCell::new(Ppu::new(Rc::clone(&interrupts))));
+
+        let bus = Bus::new(Rc::clone(&ppu), Rc::clone(&timer), Rc::clone(&joypad),
                                Rc::clone(&interrupts), Rc::clone(&cartridge));
 
         let cpu = Rc::new(RefCell::new(Cpu::new(Rc::clone(&interrupts), Bus::get_controller(&bus), is_cgb)));
@@ -46,18 +52,31 @@ impl GameBoy {
             b.set_cpu(Rc::clone(&cpu));
             b.set_dma_controller(Rc::clone(&dma));
         }
-        Ok(Self { bus, cpu, dma, timer, cartridge: Rc::clone(&cartridge) })
+        Ok(Self { bus, cpu, ppu, dma, timer, cartridge: Rc::clone(&cartridge), cycle_counter: 0 })
     }
 
-    fn clock(&mut self) {
-        (*self.cpu).borrow_mut().clock();
+    pub fn clock(&mut self) {
         (*self.dma).borrow_mut().clock();
         (*self.timer).borrow_mut().clock();
+        (*self.ppu).borrow_mut().clock();
+        (*self.cpu).borrow_mut().clock();
+
+        self.cycle_counter += 1;
     }
 
-    pub fn cycle(&mut self) {
-        for i in 0..=0xFFFF {
-            self.clock()
-        }
+    pub fn reset_cycle_counter(&mut self) {
+        self.cycle_counter = 0;
+    }
+
+    pub fn is_in_vblank(&self) -> bool {
+        matches!((*self.ppu).borrow_mut().state, PpuState::VBlank)
+    }
+
+    pub fn cycle_counter(&self) -> u64 {
+        self.cycle_counter
+    }
+
+    pub fn screen(&self) -> Vec<u8> {
+        (*self.ppu).borrow_mut().screen().to_owned()
     }
 }

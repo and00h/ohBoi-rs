@@ -3,8 +3,9 @@ mod prefixed_insts;
 
 use std::cell::{Ref, RefCell};
 use std::collections::VecDeque;
+use std::fmt::{Debug, Formatter};
 use std::rc::{Rc, Weak};
-use log::debug;
+use log::{debug, trace, warn};
 use crate::core::bus::{Bus, BusController};
 use crate::core::interrupts::{Interrupt, InterruptController};
 
@@ -31,6 +32,7 @@ pub(crate) enum Register16 {
     AF = 0x76, BC = 0x1, DE = 0x23, HL = 0x45
 }
 
+#[derive(Debug, Copy, Clone)]
 #[repr(u8)]
 pub(crate) enum CpuFlag {
     Zero        = 0b10000000,
@@ -129,6 +131,19 @@ impl Registers {
     }
 }
 
+impl Debug for Registers {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        static FLAGS: [CpuFlag; 4] = [CpuFlag::Zero, CpuFlag::Sub, CpuFlag::HalfCarry, CpuFlag::Carry];
+        write!(f, "AF = {:#04x}, BC = {:#04x}, DE = {:#04x}, HL = {:#04x}. Flags set: ",
+               self.get_reg16(AF), self.get_reg16(BC),
+               self.get_reg16(DE), self.get_reg16(HL))?;
+        for flag in FLAGS {
+            write!(f, "{:?} ", flag)?;
+        }
+        Ok(())
+    }
+}
+
 pub(crate) static INTERRUPT_VECTORS: [(Interrupt, u16); 5] = [
     (Interrupt::JPAD, 0x40),
     (Interrupt::SERIAL, 0x48),
@@ -137,7 +152,7 @@ pub(crate) static INTERRUPT_VECTORS: [(Interrupt, u16); 5] = [
     (Interrupt::VBLANK, 0x60)
 ];
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) enum CpuState {
     Fetching { halt_bug: bool },
     Decoding(u8),
@@ -176,7 +191,7 @@ pub(crate) enum CpuState {
 }
 
 impl CpuState {
-    pub fn should_continue(&self) -> bool {
+    pub fn is_intermediate(&self) -> bool {
         matches!(self, Self::Decoding(_)
             | Self::StartedExecution | Self::FinishedExecution
             | Self::EnablingInterrupts | Self::ServicingInterrupts | Self::Halting)
@@ -192,11 +207,10 @@ pub(crate) struct Cpu {
     pc: u16,
     sp: u16,
 
-    instruction: Option<fn(&mut Cpu)>,
+    instruction: fn(&mut Cpu),
     instruction_arg: InstArg,
 
     interrupts_to_handle: VecDeque<u16>,
-    halt_bug_trigger: bool,
     double_speed: bool,
 
     cycles: u64,
@@ -205,6 +219,7 @@ pub(crate) struct Cpu {
 
 impl Cpu {
     pub fn new(interrupt_controller: Rc<RefCell<InterruptController>>, bus: BusController, cgb: bool) -> Self {
+        trace!("Building CPU");
         Self {
             interrupt_controller,
             bus,
@@ -212,10 +227,9 @@ impl Cpu {
             registers: Registers::new(cgb),
             pc: 0x0100,
             sp: 0xFFFE,
-            instruction: None,
+            instruction: INSTRUCTIONS[0],
             instruction_arg: InstArg::None,
             interrupts_to_handle: VecDeque::new(),
-            halt_bug_trigger: false,
             double_speed: false,
             cycles: 0,
             cgb
@@ -223,11 +237,11 @@ impl Cpu {
     }
 
     pub fn reset(&mut self) {
+        debug!("Resetting CPU");
         self.sp = 0xFFFE;
         self.pc = 0x0100;
         self.state = CpuState::Fetching { halt_bug: false };
 
-        self.halt_bug_trigger = false;
         self.double_speed = false;
         self.cycles = 0;
 
@@ -241,36 +255,57 @@ impl Cpu {
     }
 
     fn decode(&mut self, opcode: u8) {
-        self.instruction = Some(INSTRUCTIONS[opcode as usize]);
+        self.instruction = INSTRUCTIONS[opcode as usize];
+        trace!("Executing instruction {:02X}", opcode);
         self.state = CpuState::StartedExecution;
     }
 
-    fn exec_inst(&mut self) {
-        if let Some(f) = self.instruction {
-            f(self);
+    fn halting(&mut self) {
+        let i = (*self.interrupt_controller).borrow();
+        if i.ime {
+            self.state = if i.interrupts_pending() { CpuState::ServicingInterrupts } else { CpuState::Halted };
+        } else if i.interrupts_pending() {
+            self.state = CpuState::Fetching { halt_bug: true }
         } else {
-            panic!("No instruction to execute!");
+            self.state = CpuState::Halted;
         }
     }
 
-    fn handle_interrupts(&mut self) {
+    fn check_interrupts(&mut self) -> CpuState {
+        let mut interrupts = (*self.interrupt_controller).borrow_mut();
+        let pending = interrupts.interrupts_pending();
+        self.interrupts_to_handle = if interrupts.ime && pending {
+            interrupts.ime = false;
+            INTERRUPT_VECTORS.iter().filter_map(|(int, vector_addr)| {
+                if interrupts.is_enabled(*int) && interrupts.is_raised(*int) {
+                    interrupts.serve(*int);
+                    Some(*vector_addr)
+                } else {
+                    None
+                }
+            }).collect()
+        } else {
+            VecDeque::default()
+        };
+        if !self.interrupts_to_handle.is_empty() {
+            CpuState::InterruptWaitState1
+        } else {
+            CpuState::Fetching { halt_bug: false }
+        }
+    }
+
+    fn interrupt_service_routine(&mut self) {
         self.state =
             match self.state {
-                CpuState::ServicingInterrupts => {
-                    if !self.interrupts_to_handle.is_empty() {
-                        CpuState::InterruptWaitState1
-                    } else {
-                        CpuState::Fetching { halt_bug: false }
-                    }
-                },
+                CpuState::ServicingInterrupts => self.check_interrupts(),
                 CpuState::InterruptWaitState1 => CpuState::InterruptWaitState2,
                 CpuState::InterruptWaitState2 => {
-                    self.sp -= 1;
+                    self.sp = self.sp.wrapping_sub(1);
                     CpuState::InterruptPushPCHi
                 },
                 CpuState::InterruptPushPCHi => {
                     self.bus.write(self.sp, (self.pc >> 8) as u8);
-                    self.sp -= 1;
+                    self.sp = self.sp.wrapping_sub(1);
                     CpuState::InterruptPushPCLo
                 },
                 CpuState::InterruptPushPCLo => {
@@ -289,79 +324,39 @@ impl Cpu {
             }
     }
 
-    fn advance(&mut self) {
+    pub(crate) fn advance(&mut self) {
         use CpuState::*;
         let old_state = self.state;
         match self.state {
             Fetching { halt_bug } => self.fetch(halt_bug),
             Decoding(opcode) => self.decode(opcode),
-            StartedExecution => self.exec_inst(),
             EnablingInterrupts => self.execute_ei(),
-            Halting => {
-                let i = (*self.interrupt_controller).borrow();
-                if i.ime {
-                    self.state = if i.interrupts_pending() { ServicingInterrupts } else { Halted };
-                } else if i.interrupts_pending() {
-                    self.state = Fetching { halt_bug: true }
-                } else {
-                    self.state = Halted;
-                }
-            },
-            Halted => {
+            Halting => self.halting(),
+            Halted =>
                 if (*self.interrupt_controller).borrow().interrupts_pending() {
                     self.state = ServicingInterrupts;
-                }
-            },
-            FinishedExecution => {
-                self.state = ServicingInterrupts
-            },
-            ServicingInterrupts => {
-                self.service_interrupts();
-                self.handle_interrupts();
-            },
-            InterruptWaitState1 | InterruptWaitState2
+                },
+            FinishedExecution => self.state = ServicingInterrupts,
+            ServicingInterrupts
+            | InterruptWaitState1 | InterruptWaitState2
             | InterruptPushPCHi | InterruptPushPCLo
-            | InterruptUpdatePC => self.handle_interrupts(),
-            state => {
-                if let Some(f) = self.instruction {
-                    f(self);
-                } else {
-                    panic!("State {:?} unhandled!", state);
-                }
-            }
+            | InterruptUpdatePC => self.interrupt_service_routine(),
+            _ => (self.instruction)(self)
         }
-        debug!("{:?} => {:?}", old_state, self.state);
+        debug_assert!(old_state != self.state || self.state == Halted);
+        // trace!("{:?} => {:?}", old_state, self.state);
     }
 
     pub fn clock(&mut self) {
         loop {
             self.advance();
-            if !self.state.should_continue() { break }
+            if !self.state.is_intermediate() { break }
         }
     }
 
     fn execute_ei(&mut self) {
         (*self.interrupt_controller).borrow_mut().ime = true;
         self.state = CpuState::Fetching { halt_bug: false };
-    }
-
-    fn service_interrupts(&mut self) {
-        let mut interrupts = (*self.interrupt_controller).borrow_mut();
-        let pending = interrupts.interrupts_pending();
-        self.interrupts_to_handle = if interrupts.ime && pending {
-            interrupts.ime = false;
-            INTERRUPT_VECTORS.iter().filter_map(|(int, vector_addr)| {
-                if interrupts.is_enabled(*int) && interrupts.is_raised(*int) {
-                    interrupts.serve(*int);
-                    Some(*vector_addr)
-                } else {
-                    None
-                }
-            }).collect()
-        } else {
-            VecDeque::default()
-        }
-
     }
 
     // Instructions
@@ -444,7 +439,7 @@ impl Cpu {
             match self.state {
                 CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(HL)),
                 CpuState::ReadMemory(addr) => {
-                    let mut data = self.bus.read(addr).wrapping_add(1);
+                    let data = self.bus.read(addr).wrapping_add(1);
                     CpuState::WriteMemory(addr, data)
                 },
                 CpuState::WriteMemory(addr, data) => {
@@ -795,6 +790,7 @@ impl Cpu {
             CpuState::StartedExecution => CpuState::ReadArg,
             CpuState::ReadArg => {
                 let arg = self.bus.read(self.pc);
+                trace!("Executing CB instruction {:02X}", arg);
                 self.pc += 1;
                 self.instruction_arg = InstArg::Byte(arg);
                 PREFIXED_INSTS[arg as usize](self)

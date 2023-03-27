@@ -1,7 +1,9 @@
 use std::cell::RefCell;
+use std::panic::Location;
 use std::rc::{Rc, Weak};
-use log::warn;
+use log::{trace, warn};
 use crate::core::cpu::Cpu;
+use crate::core::gpu::Ppu;
 use crate::core::interrupts::{Interrupt, InterruptController};
 use crate::core::joypad::Joypad;
 use crate::core::memory::cartridge::Cartridge;
@@ -16,13 +18,17 @@ impl BusController {
         BusController(bus)
     }
 
+    #[track_caller]
     pub fn write(&mut self, addr: u16, val: u8) {
+        trace!("Write of {:02X} to {:04X} (requested by: {})", val, addr, Location::caller());
         if let Some(b) = self.0.upgrade() {
             (*b).borrow_mut().write(addr, val);
         }
     }
 
+    #[track_caller]
     pub fn read(&self, addr: u16) -> u8 {
+        trace!("Read from to {:04X} (requested by: {})", addr, Location::caller());
         if let Some(b) = self.0.upgrade() {
             (*b).borrow_mut().read(addr)
         } else { 0xFF }
@@ -36,15 +42,20 @@ pub(crate) struct Bus {
     dma: Option<Rc<RefCell<DmaController>>>,
     cartridge: Rc<RefCell<Cartridge>>,
     interrupts: Rc<RefCell<InterruptController>>,
+    ppu: Rc<RefCell<Ppu>>,
     wram: WRAM,
-    hram: Vec<u8>
-    // TODO GPU
+    hram: Vec<u8>,
+    iospace: Vec<u8>
 }
 
 impl Bus {
-    pub fn new(timer: Rc<RefCell<Timer>>, joypad: Rc<RefCell<Joypad>>,
-               interrupts: Rc<RefCell<InterruptController>>, cartridge: Rc<RefCell<Cartridge>>) -> Rc<RefCell<Self>> {
+    pub fn new(ppu: Rc<RefCell<Ppu>>,
+               timer: Rc<RefCell<Timer>>,
+               joypad: Rc<RefCell<Joypad>>,
+               interrupts: Rc<RefCell<InterruptController>>,
+               cartridge: Rc<RefCell<Cartridge>>) -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Bus {
+            ppu,
             timer,
             joypad,
             cpu: None,
@@ -52,7 +63,8 @@ impl Bus {
             cartridge,
             interrupts,
             wram: WRAM::new(),
-            hram: vec![0; 0x7F]
+            hram: vec![0; 0x7F],
+            iospace: vec![0; 0x80]
         }))
     }
 
@@ -68,28 +80,35 @@ impl Bus {
         self.dma = Some(dma);
     }
 
-    pub fn write_io(&self, addr: u16, val: u8) {
+    fn write_io(&mut self, addr: u16, val: u8) {
         match addr {
-            0xFF01 => print!("{}", val as char),
+            0xFF01 if cfg!(debug_assertions) => print!("{}", val as char),
             0xFF04 => (*self.timer).borrow_mut().divider = 0,
             0xFF05 => (*self.timer).borrow_mut().tima = val,
             0xFF06 => (*self.timer).borrow_mut().tma = val,
             0xFF07 => (*self.timer).borrow_mut().set_tac(val),
             0xFF0F => (*self.interrupts).borrow_mut().set_interrupt_request(val),
-            _ => warn!("Write of value 0x{:X} to I/O port 0x{:X} unhandled", val, addr)
+            0xFF46 => (*self.dma.as_ref().unwrap()).borrow_mut().trigger(val),
+            0xFF40..=0xFF4F => (*self.ppu).borrow_mut().write(addr, val),
+            _ => {
+                warn!("Write of value 0x{:X} to I/O port 0x{:X} unhandled", val, addr);
+                self.iospace[addr as usize - 0xFF00] = val;
+            }
         }
     }
 
-    pub fn read_io(&self, addr: u16) -> u8 {
+    fn read_io(&self, addr: u16) -> u8 {
         match addr {
             0xFF04 => (*self.timer).borrow().divider,
             0xFF05 => (*self.timer).borrow().tima,
             0xFF06 => (*self.timer).borrow_mut().tma,
             0xFF07 => (*self.timer).borrow_mut().tac(),
             0xFF0F => (*self.interrupts).borrow_mut().get_interrupt_request(),
+            0xFF40..=0xFF4F => (*self.ppu).borrow_mut().read(addr),
+            0xFF50 => 1,
             _ => {
                 warn!("Read from I/O port 0x{:X} unhandled", addr);
-                0xFF
+                self.iospace[addr as usize - 0xFF00]
             }
         }
     }
@@ -97,10 +116,9 @@ impl Bus {
     pub fn read(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x7FFF | 0xA000..=0xBFFF => (*self.cartridge).borrow().read(addr),
-            0x8000..=0x9FFF => 0x00,
+            0x8000..=0x9FFF | 0xFE00..=0xFE9F => (*self.ppu).borrow().read(addr),
             0xC000..=0xDFFF => self.wram.read(addr),
             0xE000..=0xFDFF => self.wram.read(addr - 0x2000),
-            0xFE00..=0xFE9F => 0x00,
             0xFEA0..=0xFEFF => 0x00,
             0xFF00..=0xFF7F => self.read_io(addr),
             0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80],
@@ -112,10 +130,9 @@ impl Bus {
     pub fn write(&mut self, addr: u16, val: u8) {
         match addr {
             0x0000..=0x7FFF | 0xA000..=0xBFFF => (*self.cartridge).borrow_mut().write(addr, val),
-            0x8000..=0x9FFF => {  },
+            0x8000..=0x9FFF | 0xFE00..=0xFE9F => (*self.ppu).borrow_mut().write(addr, val),
             0xC000..=0xDFFF => self.wram.write(addr, val),
             0xE000..=0xFDFF => self.wram.write(addr - 0x2000, val),
-            0xFE00..=0xFE9F => {},
             0xFEA0..=0xFEFF => {},
             0xFF00..=0xFF7F => self.write_io(addr, val),
             0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80] = val,

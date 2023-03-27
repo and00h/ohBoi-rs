@@ -1,7 +1,7 @@
 use std::hash::Hasher;
 use fern::colors::{Color, ColoredLevelConfig};
 
-pub fn setup_logger(verbosity: u64) -> Result<(), fern::InitError> {
+pub fn setup_logger(verbosity: u64, cpu_verbosity: u64) -> Result<(), fern::InitError> {
     let mut config = fern::Dispatch::new();
     config = match verbosity {
         0 => config.level(log::LevelFilter::Off),
@@ -10,6 +10,15 @@ pub fn setup_logger(verbosity: u64) -> Result<(), fern::InitError> {
         3 => config.level(log::LevelFilter::Debug),
         _ => config.level(log::LevelFilter::Trace)
     };
+    config = match cpu_verbosity {
+        0 => config.level_for("ohBoi_rs::core::cpu", log::LevelFilter::Off),
+        1 => config.level_for("ohBoi_rs::core::cpu", log::LevelFilter::Warn),
+        2 => config.level_for("ohBoi_rs::core::cpu", log::LevelFilter::Info),
+        3 => config.level_for("ohBoi_rs::core::cpu", log::LevelFilter::Debug),
+        _ => config.level_for("ohBoi_rs::core::cpu", log::LevelFilter::Trace)
+    };
+
+    config = config.level_for("ohBoi_rs::core::bus", log::LevelFilter::Warn);
 
     let colors_line = ColoredLevelConfig::new()
         .error(Color::Red)

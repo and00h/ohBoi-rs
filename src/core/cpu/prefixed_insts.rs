@@ -175,14 +175,13 @@ fn srl(cpu: &mut Cpu, val: u8) -> u8 {
     res
 }
 
-#[inline]
 fn res(bit: usize, val: u8) -> u8 {
     val & !(1 << bit)
 }
 
-#[inline]
 fn set(bit: usize, val: u8) -> u8 {
-    val | (1 << bit)
+    let res = val | (1 << bit);
+    res
 }
 
 fn bit(cpu: &mut Cpu, bit: usize, val: u8) {
