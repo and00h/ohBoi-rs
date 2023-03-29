@@ -17,7 +17,7 @@ use crate::ui::GameWindow;
 fn main() -> Result<(), Box<dyn Error>> {
     logging::setup_logger(0, 0)?;
     info!("Starting ohBoi");
-    let mut gb = GameBoy::new(PathBuf::from(".\\dmg-acid2.gb"))?;
+    let mut gb = GameBoy::new(PathBuf::from("./tetris.gb"))?;
     let sdl = sdl2::init()?;
     let video_subsystem = sdl.video()?;
     let gl_attr = video_subsystem.gl_attr();
@@ -83,9 +83,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     'main: loop {
         for event in event_pump.poll_iter() {
             platform.handle_event(&mut imgui, &event);
-            window.handle_event(&event);
             if matches!(event, Event::Quit { .. }) {
                 break 'main;
+            }
+            if let Some(path) = window.handle_event(&event) {
+                gb = GameBoy::new(path)?;
             }
         }
 

@@ -451,18 +451,26 @@ impl Ppu {
         }
     }
 
-    fn read_oam(&self, addr: u16) -> u8 {
-        self.oam[addr as usize]
+    fn read_oam(&self, addr: u16, dma: bool) -> u8 {
+        match self.state {
+            _ if dma => self.oam[addr as usize],
+            PpuState::OAMSearch | PpuState::PixelTransfer => 0xFF,
+            PpuState::VBlank | PpuState::HBlank => self.oam[addr as usize]
+        }
     }
 
-    fn write_oam(&mut self, addr: u16, val: u8) {
-        self.oam[addr as usize] = val;
+    fn write_oam(&mut self, addr: u16, val: u8, dma: bool) {
+        match self.state {
+            _ if dma => self.oam[addr as usize] = val,
+            PpuState::OAMSearch | PpuState::PixelTransfer => {},
+            PpuState::VBlank | PpuState::HBlank => self.oam[addr as usize] = val
+        }
     }
 
-    pub fn read(&self, addr: u16) -> u8 {
+    pub fn read(&self, addr: u16, dma: bool) -> u8 {
         match addr {
             0x8000..=0x9FFF => self.read_vram(addr - 0x8000),
-            0xFE00..=0xFE9F => self.read_oam(addr - 0xFE00),
+            0xFE00..=0xFE9F => self.read_oam(addr - 0xFE00, dma),
             0xFF40 => self.lcdc,
             0xFF41 => self.lcd_stat,
             0xFF42 => self.scroll_y,
@@ -482,13 +490,15 @@ impl Ppu {
         }
     }
 
-    pub fn write(&mut self, addr: u16, val: u8) {
+    pub fn write(&mut self, addr: u16, val: u8, dma: bool) {
         match addr {
             0x8000..=0x9FFF => self.write_vram(addr - 0x8000, val),
-            0xFE00..=0xFE9F => self.write_oam(addr - 0xFE00, val),
+            0xFE00..=0xFE9F => self.write_oam(addr - 0xFE00, val, dma),
             0xFF40 => {
-                trace!("Old {:02X} New {:02X}", self.lcdc, val);
                 self.lcdc = val;
+                if self.lcdc & lcdc_flags::LCD_ENABLE == 0 {
+                    self.disable_lcd();
+                }
                 // println!("{:02X} {:02X}", self.lcdc, lcdc_flags::LCD_ENABLE);
             },
             0xFF41 => self.lcd_stat = 0x80 | val,
@@ -568,7 +578,7 @@ impl Ppu {
                 let oam_index = i as usize;
                 let sprite = Sprite::new(i, &self.oam[oam_index..oam_index + 4]);
                 let obj_size = if self.lcdc & lcdc_flags::OBJ_SIZE != 0 { 16 } else { 8 };
-                let visible_range = (sprite.y..(sprite.y + obj_size));
+                let visible_range = (sprite.y..(sprite.y.wrapping_add(obj_size)));
                 if visible_range.contains(&(self.ly as u8 + 16)) {
                     self.sprites.push(sprite);
                 }
@@ -600,7 +610,7 @@ impl Ppu {
             let sprite =
                 self.sprites
                     .iter_mut()
-                    .find(|s| ((s.x - 8)..s.x).contains(&self.current_pixel) && !s.removed);
+                    .find(|s| ((s.x.wrapping_sub(8))..s.x).contains(&self.current_pixel) && !s.removed);
 
             if let Some(sprite) = sprite {
                 if self.bg_fifo.len() >= 8 {

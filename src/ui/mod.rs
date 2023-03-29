@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::Read;
+use std::path::PathBuf;
 use std::rc::Rc;
 use imgui_glow_renderer::glow::PixelUnpackData;
 use imgui::{Condition, StyleVar, TextureId, Textures, WindowFlags};
@@ -28,11 +29,14 @@ impl GameWindow {
         Ok(Self { canvas, renderer, texture, counter: 0 })
     }
 
-    pub fn handle_event(&mut self, e: &Event) -> bool {
+    pub fn handle_event(&mut self, e: &Event) -> Option<PathBuf> {
         match e.get_window_id() {
             Some(id) if id == self.canvas.id() =>
-                matches!(e, &Event::Quit { .. }),
-            _ => false,
+                match e {
+                    Event::DropFile { filename, .. } => Some(PathBuf::from(filename)),
+                    _ => None
+                },
+            _ => None,
         }
     }
 

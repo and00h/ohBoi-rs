@@ -56,7 +56,10 @@ impl GameBoy {
     }
 
     pub fn clock(&mut self) {
-        (*self.dma).borrow_mut().clock();
+        use cpu::CpuState;
+        if !matches!((*self.cpu).borrow().state(), &CpuState::Halted) {
+            (*self.dma).borrow_mut().clock();
+        }
         (*self.timer).borrow_mut().clock();
         (*self.ppu).borrow_mut().clock();
         (*self.cpu).borrow_mut().clock();

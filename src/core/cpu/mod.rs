@@ -2,10 +2,10 @@ mod instructions;
 mod prefixed_insts;
 
 use std::cell::{Ref, RefCell};
-use std::collections::VecDeque;
+use std::collections::vec_deque::VecDeque;
 use std::fmt::{Debug, Formatter};
 use std::rc::{Rc, Weak};
-use log::{debug, trace, warn};
+use log::{debug, info, trace, warn};
 use crate::core::bus::{Bus, BusController};
 use crate::core::interrupts::{Interrupt, InterruptController};
 
@@ -48,7 +48,7 @@ pub(crate) struct Registers {
 
 use Register8::*;
 use Register16::*;
-use crate::core::cpu::instructions::{InstArg, INSTRUCTIONS, InstructionType};
+use crate::core::cpu::instructions::{InstArg, INSTRUCTIONS, InstructionType, MNEMONICS, NARGS};
 use crate::core::cpu::prefixed_insts::PREFIXED_INSTS;
 
 impl Registers {
@@ -145,11 +145,11 @@ impl Debug for Registers {
 }
 
 pub(crate) static INTERRUPT_VECTORS: [(Interrupt, u16); 5] = [
-    (Interrupt::JPAD, 0x40),
-    (Interrupt::SERIAL, 0x48),
+    (Interrupt::JPAD, 0x60),
+    (Interrupt::SERIAL, 0x58),
     (Interrupt::TIMER, 0x50),
-    (Interrupt::LCD, 0x58),
-    (Interrupt::VBLANK, 0x60)
+    (Interrupt::LCD, 0x48),
+    (Interrupt::VBLANK, 0x40),
 ];
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -214,6 +214,7 @@ pub(crate) struct Cpu {
     double_speed: bool,
 
     cycles: u64,
+    elapsed: u64,
     cgb: bool,
 }
 
@@ -223,7 +224,7 @@ impl Cpu {
         Self {
             interrupt_controller,
             bus,
-            state: CpuState::Fetching { halt_bug: false },
+            state: CpuState::ServicingInterrupts,
             registers: Registers::new(cgb),
             pc: 0x0100,
             sp: 0xFFFE,
@@ -232,6 +233,7 @@ impl Cpu {
             interrupts_to_handle: VecDeque::new(),
             double_speed: false,
             cycles: 0,
+            elapsed: 0,
             cgb
         }
     }
@@ -256,8 +258,10 @@ impl Cpu {
 
     fn decode(&mut self, opcode: u8) {
         self.instruction = INSTRUCTIONS[opcode as usize];
-        trace!("Executing instruction {:02X}", opcode);
         self.state = CpuState::StartedExecution;
+        self.cycles += self.elapsed;
+        self.elapsed = 0;
+        debug!("Starting execution of instruction {:02X} at cycle {}", opcode, self.cycles);
     }
 
     fn halting(&mut self) {
@@ -297,23 +301,31 @@ impl Cpu {
     fn interrupt_service_routine(&mut self) {
         self.state =
             match self.state {
-                CpuState::ServicingInterrupts => self.check_interrupts(),
-                CpuState::InterruptWaitState1 => CpuState::InterruptWaitState2,
+                CpuState::ServicingInterrupts => { self.check_interrupts() },
+                CpuState::InterruptWaitState1 => {
+                    self.cycles += self.elapsed;
+                    self.elapsed = 0;
+                    debug!("Starting interrupt servicing at cycle {}", self.cycles);
+                    CpuState::InterruptWaitState2
+                },
                 CpuState::InterruptWaitState2 => {
-                    self.sp = self.sp.wrapping_sub(1);
                     CpuState::InterruptPushPCHi
                 },
                 CpuState::InterruptPushPCHi => {
-                    self.bus.write(self.sp, (self.pc >> 8) as u8);
                     self.sp = self.sp.wrapping_sub(1);
+                    self.bus.write(self.sp, (self.pc >> 8) as u8);
                     CpuState::InterruptPushPCLo
                 },
                 CpuState::InterruptPushPCLo => {
+                    self.sp = self.sp.wrapping_sub(1);
                     self.bus.write(self.sp, (self.pc & 0xFF) as u8);
                     CpuState::InterruptUpdatePC
                 },
                 CpuState::InterruptUpdatePC => {
                     self.pc = self.interrupts_to_handle.pop_front().unwrap();
+                    debug!("Finished servicing interrupt at cycle {}", self.cycles + self.elapsed);
+                    self.cycles += self.elapsed;
+                    self.elapsed = 0;
                     if self.interrupts_to_handle.is_empty() {
                         CpuState::Fetching { halt_bug: false }
                     } else {
@@ -336,7 +348,10 @@ impl Cpu {
                 if (*self.interrupt_controller).borrow().interrupts_pending() {
                     self.state = ServicingInterrupts;
                 },
-            FinishedExecution => self.state = ServicingInterrupts,
+            FinishedExecution => {
+                debug!("Finished execution at cycle {}", self.cycles + self.elapsed);
+                self.state = ServicingInterrupts
+            },
             ServicingInterrupts
             | InterruptWaitState1 | InterruptWaitState2
             | InterruptPushPCHi | InterruptPushPCLo
@@ -347,11 +362,16 @@ impl Cpu {
         // trace!("{:?} => {:?}", old_state, self.state);
     }
 
+    pub fn state(&self) -> &CpuState {
+        &self.state
+    }
+
     pub fn clock(&mut self) {
         loop {
             self.advance();
             if !self.state.is_intermediate() { break }
         }
+        self.elapsed += 1;
     }
 
     fn execute_ei(&mut self) {
@@ -790,7 +810,7 @@ impl Cpu {
             CpuState::StartedExecution => CpuState::ReadArg,
             CpuState::ReadArg => {
                 let arg = self.bus.read(self.pc);
-                trace!("Executing CB instruction {:02X}", arg);
+                debug!("Executing CB instruction {:02X}", arg);
                 self.pc += 1;
                 self.instruction_arg = InstArg::Byte(arg);
                 PREFIXED_INSTS[arg as usize](self)
@@ -951,14 +971,7 @@ impl Cpu {
     fn ret(&mut self, condition: bool) {
         self.state =
             match self.state {
-                CpuState::StartedExecution => CpuState::BranchDecision,
-                CpuState::BranchDecision => {
-                    if condition {
-                        CpuState::ReadMemoryLo(self.sp)
-                    } else {
-                        CpuState::FinishedExecution
-                    }
-                },
+                CpuState::StartedExecution => CpuState::ReadMemoryLo(self.sp),
                 CpuState::ReadMemoryLo(addr) => {
                     let pc_lo = self.bus.read(addr);
                     self.sp += 1;
@@ -979,7 +992,17 @@ impl Cpu {
 
     fn ret_conditional(&mut self, flag: CpuFlag, negate: bool) {
         let condition = self.registers.test_flag(flag) ^ negate;
-        self.ret(condition);
+        match self.state {
+            CpuState::StartedExecution => self.state = CpuState::BranchDecision,
+            CpuState::BranchDecision => self.state = {
+                if condition {
+                    CpuState::ReadMemoryLo(self.sp)
+                } else {
+                    CpuState::FinishedExecution
+                }
+            },
+            _ => self.ret(condition)
+        }
     }
 
     fn reti(&mut self) {
@@ -1014,15 +1037,15 @@ impl Cpu {
             match self.state {
                 CpuState::StartedExecution => CpuState::Internal,
                 CpuState::Internal => {
-                    self.sp -= 1;
                     CpuState::PushHi
                 },
                 CpuState::PushHi => {
-                    self.bus.write(self.sp, self.registers.get_reg8(hi));
                     self.sp -= 1;
+                    self.bus.write(self.sp, self.registers.get_reg8(hi));
                     CpuState::PushLo
                 },
                 CpuState::PushLo => {
+                    self.sp -= 1;
                     self.bus.write(self.sp, self.registers.get_reg8(lo));
                     CpuState::FinishedExecution
                 },
@@ -1035,15 +1058,15 @@ impl Cpu {
             match self.state {
                 CpuState::StartedExecution => CpuState::Internal,
                 CpuState::Internal => {
-                    self.sp -= 1;
                     CpuState::PushHi
                 }
                 CpuState::PushHi => {
+                    self.sp = self.sp.wrapping_sub(1);
                     self.bus.write(self.sp, (self.pc >> 8) as u8);
-                    self.sp -= 1;
                     CpuState::PushLo
                 },
                 CpuState::PushLo => {
+                    self.sp = self.sp.wrapping_sub(1);
                     self.bus.write(self.sp, (self.pc & 0xFF) as u8);
                     self.pc = addr;
                     CpuState::FinishedExecution
@@ -1071,15 +1094,15 @@ impl Cpu {
                     }
                 },
                 CpuState::Internal => {
-                    self.sp -= 1;
                     CpuState::PushHi
                 },
                 CpuState::PushHi => {
-                    self.bus.write(self.sp, (self.pc >> 8) as u8);
                     self.sp -= 1;
+                    self.bus.write(self.sp, (self.pc >> 8) as u8);
                     CpuState::PushLo
                 },
                 CpuState::PushLo => {
+                    self.sp -= 1;
                     self.bus.write(self.sp, (self.pc & 0xFF) as u8);
                     self.pc = self.instruction_arg.build_word();
 

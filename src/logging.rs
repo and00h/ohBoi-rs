@@ -18,8 +18,6 @@ pub fn setup_logger(verbosity: u64, cpu_verbosity: u64) -> Result<(), fern::Init
         _ => config.level_for("ohBoi_rs::core::cpu", log::LevelFilter::Trace)
     };
 
-    config = config.level_for("ohBoi_rs::core::bus", log::LevelFilter::Warn);
-
     let colors_line = ColoredLevelConfig::new()
         .error(Color::Red)
         .warn(Color::Yellow)

@@ -2,6 +2,29 @@ use log::warn;
 use crate::core::memory::cartridge::{Cartridge, CartridgeHeader, CartridgeType};
 
 pub(super) mod none;
+pub(super) mod mbc1;
+
+enum BankingMode {
+    ROM,
+    RAM
+}
+
+const RAM_SIZE_MAP: [usize; 6] = [
+    0, 2048, 8192, 32768, 131072, 65535
+];
+
+const ROM_BANK_SIZE: usize = 0x4000;
+const RAM_BANK_SIZE: usize = 0x2000;
+
+fn calc_rom_size(header_rom_size: usize) -> usize {
+    match header_rom_size {
+        0..=8 => 0x8000 << header_rom_size,
+        0x52 => 72 * ROM_BANK_SIZE,
+        0x53 => 80 * ROM_BANK_SIZE,
+        0x54 => 96 * ROM_BANK_SIZE,
+        _ => panic!("Invalid ROM size in cartridge header: {:02X}", header_rom_size)
+    }
+}
 
 pub(super) trait Mbc {
     fn read(&self, addr: u16) -> u8;
@@ -23,6 +46,9 @@ pub(super) trait Mbc {
 pub(super) fn make_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) -> Box<dyn Mbc> {
     match header.cart_type {
         CartridgeType::None => Box::new(none::None::new(rom)),
+        CartridgeType::MBC1 | CartridgeType::MBC1_RAM =>
+            Box::new(mbc1::Mbc1::new(rom, header, false)),
+        CartridgeType::MBC1_RAM_BATTERY => Box::new(mbc1::Mbc1::new(rom, header, true)),
         t => {
             warn!("Unimplemented cartridge type {:?}. Falling back to None", t);
             Box::new(none::None::new(rom))

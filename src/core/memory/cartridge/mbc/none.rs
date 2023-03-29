@@ -15,9 +15,7 @@ impl Mbc for None {
         self.rom[addr as usize]
     }
 
-    fn write(&mut self, addr: u16, val: u8) {
-        self.rom[addr as usize] = val;
-    }
+    fn write(&mut self, _addr: u16, _val: u8) {}
 
     fn rom(&self) -> &Vec<u8> {
         &self.rom
