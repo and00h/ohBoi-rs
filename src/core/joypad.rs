@@ -36,7 +36,9 @@ const KEY_MASK_MAP: [u8; 8] = [
 ];
 
 pub struct Joypad {
-    key_state: u8,
+    key_state_buttons: u8,
+    key_state_dir: u8,
+    key_select: u8,
     interrupt_controller: Rc<RefCell<InterruptController>>
 }
 
@@ -44,29 +46,61 @@ impl Joypad {
     pub fn new(interrupt_controller: Rc<RefCell<InterruptController>>) -> Self {
         trace!("Building Joypad");
         Joypad {
-            key_state: 0xFF,
+            key_state_buttons: 0xF,
+            key_state_dir: 0xF,
+            key_select: 0xF0,
             interrupt_controller
         }
     }
 
     pub fn get_key_register(&self) -> u8 {
-        self.key_state
+        let mut res = (self.key_select & 0xF0) | 0xC0;
+        if self.buttons_enabled() { res |= self.key_state_buttons; }
+        if self.directional_enabled() { res |= self.key_state_dir; }
+
+        res
+    }
+
+    fn buttons_enabled(&self) -> bool {
+        self.key_select & key_masks::BUTTON == 0
+    }
+
+    fn directional_enabled(&self) -> bool {
+        self.key_select & key_masks::DIRECTIONAL == 0
     }
 
     pub fn press(&mut self, key: Key) {
         debug!("Key {:?} pressed", key);
-        self.key_state &= !KEY_MASK_MAP[key as usize];
-        self.raise_jpad_interrupt();
+
+        match key {
+            Key::A | Key::B | Key::Select | Key::Start => {
+                self.key_state_buttons &= !KEY_MASK_MAP[key as usize];
+                if self.buttons_enabled() { self.raise_jpad_interrupt(); }
+            },
+            Key::Up | Key::Down | Key::Left | Key::Right => {
+                self.key_state_dir &= !KEY_MASK_MAP[key as usize];
+                if self.directional_enabled() { self.raise_jpad_interrupt(); }
+            },
+            _ => {}
+        }
     }
 
     pub fn release(&mut self, key: Key) {
         debug!("Key {:?} released", key);
-        self.key_state |= KEY_MASK_MAP[key as usize];
+        match key {
+            Key::A | Key::B | Key::Select | Key::Start => {
+                self.key_state_buttons |= KEY_MASK_MAP[key as usize];
+            },
+            Key::Up | Key::Down | Key::Left | Key::Right => {
+                self.key_state_dir |= KEY_MASK_MAP[key as usize];
+            },
+            _ => {}
+        }
     }
 
     pub(self) fn is_pressed(&self, key: Key) -> bool {
-        let button_group = if (key as u8) < 4 { key_masks::BUTTON } else { key_masks::DIRECTIONAL };
-        (self.key_state & button_group) == 0 && (self.key_state & KEY_MASK_MAP[key as usize]) == 0
+        let (button_group, buttons) = if (key as usize) < 4 { (key_masks::BUTTON, self.key_state_buttons) } else { (key_masks::DIRECTIONAL, self.key_state_dir) };
+        (self.key_select & button_group) == 0 && (buttons & KEY_MASK_MAP[key as usize]) == 0
     }
 
     pub fn select_key_group(&mut self, val: u8) {
@@ -77,28 +111,17 @@ impl Joypad {
             key_masks::BUTTON => "Directional",
             _ => "[none]"
         });
-        if key_groups & key_masks::DIRECTIONAL == 0 {
-            self.key_state &= !key_masks::DIRECTIONAL;
-        } else {
-            self.key_state |= key_masks::DIRECTIONAL;
-        }
-        if key_groups & key_masks::BUTTON == 0 {
-            self.key_state &= !key_masks::BUTTON;
-        } else {
-            self.key_state |= key_masks::BUTTON;
-        }
+        self.key_select = (val & 0xF0) | 0xC0;
     }
 
     #[inline]
-    fn keys_enabled(&self) -> bool { (self.key_state & key_masks::KEY_GROUPS) != key_masks::KEY_GROUPS }
+    fn keys_enabled(&self) -> bool { (self.key_state_buttons & key_masks::KEY_GROUPS) != key_masks::KEY_GROUPS }
     #[inline]
-    fn keys_pressed(&self) -> bool { (self.key_state & key_masks::KEYS) != key_masks::KEYS }
+    fn keys_pressed(&self) -> bool { (self.key_state_buttons & key_masks::KEYS) != key_masks::KEYS }
 
     #[inline]
     fn raise_jpad_interrupt(&self) {
-        if self.keys_enabled() && self.keys_pressed() {
-            (*self.interrupt_controller).borrow_mut().raise(Interrupt::JPAD);
-        }
+        (*self.interrupt_controller).borrow_mut().raise(Interrupt::JPAD);
     }
 }
 

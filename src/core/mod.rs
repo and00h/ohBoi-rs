@@ -6,14 +6,14 @@ use crate::core::bus::Bus;
 use crate::core::cpu::Cpu;
 use crate::core::gpu::{Ppu, PpuState};
 use crate::core::interrupts::InterruptController;
-use crate::core::joypad::Joypad;
+use crate::core::joypad::{Joypad, Key};
 use crate::core::memory::cartridge::Cartridge;
 use crate::core::memory::dma::DmaController;
 use crate::core::timers::Timer;
 
 mod traits;
 pub(in crate::core) mod interrupts;
-pub(in crate::core) mod joypad;
+pub mod joypad;
 mod timers;
 mod bus;
 pub mod cpu;
@@ -21,6 +21,7 @@ mod memory;
 mod gpu;
 
 pub struct GameBoy {
+    joypad: Rc<RefCell<Joypad>>,
     bus: Rc<RefCell<Bus>>,
     cpu: Rc<RefCell<Cpu>>,
     ppu: Rc<RefCell<Ppu>>,
@@ -52,7 +53,7 @@ impl GameBoy {
             b.set_cpu(Rc::clone(&cpu));
             b.set_dma_controller(Rc::clone(&dma));
         }
-        Ok(Self { bus, cpu, ppu, dma, timer, cartridge: Rc::clone(&cartridge), cycle_counter: 0 })
+        Ok(Self { joypad, bus, cpu, ppu, dma, timer, cartridge: Rc::clone(&cartridge), cycle_counter: 0 })
     }
 
     pub fn clock(&mut self) {
@@ -82,4 +83,13 @@ impl GameBoy {
     pub fn screen(&self) -> Vec<u8> {
         (*self.ppu).borrow_mut().screen().to_owned()
     }
+
+    pub fn press(&self, key: Key) {
+        (*self.joypad).borrow_mut().press(key);
+    }
+
+    pub fn release(&self, key: Key) {
+        (*self.joypad).borrow_mut().release(key);
+    }
+
 }
