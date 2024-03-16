@@ -5,6 +5,8 @@ mod ui;
 
 use std::error::Error;
 use std::path::PathBuf;
+use std::thread;
+use std::thread::JoinHandle;
 use imgui_glow_renderer::{Renderer};
 use imgui_glow_renderer::glow::HasContext;
 use imgui_sdl2_support::SdlPlatform;
@@ -14,122 +16,59 @@ use sdl2::keyboard::Keycode;
 use sdl2::video::GLProfile;
 use crate::core::GameBoy;
 use crate::core::joypad::Key;
-use crate::ui::GameWindow;
+use crate::ui::{GameWindow, OhBoiUi};
+use crate::ui::GameWindowEvent::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
     logging::setup_logger(0, 0)?;
     info!("Starting ohBoi");
     let mut gb = GameBoy::new(PathBuf::from("./tetris.gb"))?;
-    let sdl = sdl2::init()?;
-    let video_subsystem = sdl.video()?;
-    let gl_attr = video_subsystem.gl_attr();
-    gl_attr.set_context_version(3, 3);
-    gl_attr.set_context_profile(GLProfile::Core);
-
-    let mut imgui = imgui::Context::create();
-    imgui.set_ini_filename(None);
-    imgui.set_log_filename(None);
-    imgui.style_mut().display_window_padding = [0.0, 0.0];
-    imgui.fonts().add_font(&[imgui::FontSource::DefaultFontData { config: None }]);
-
-    let mut platform = SdlPlatform::init(&mut imgui);
-    let window =
-        video_subsystem.window("ohboi", 160, 144)
-            .allow_highdpi()
-            .opengl()
-            .resizable()
-            .position_centered()
-            .build()?;
-    let context = window.gl_create_context()?;
-    window.gl_make_current(&context)?;
-    let gl = unsafe {
-        imgui_glow_renderer::glow::Context::from_loader_function(|s| video_subsystem.gl_get_proc_address(s) as _)
-    };
-    window.subsystem().gl_set_swap_interval(1).unwrap();
-    let mut textures = imgui::Textures::<imgui_glow_renderer::glow::Texture>::new();
-    const WIDTH: usize = 160;
-    const HEIGHT: usize = 144;
-
-    let gl_texture = unsafe { gl.create_texture() }.expect("unable to create GL texture");
-
-    unsafe {
-        gl.bind_texture(glow::TEXTURE_2D, Some(gl_texture));
-        gl.tex_parameter_i32(
-            glow::TEXTURE_2D,
-            glow::TEXTURE_MIN_FILTER,
-            glow::LINEAR as _,
-        );
-        gl.tex_parameter_i32(
-            glow::TEXTURE_2D,
-            glow::TEXTURE_MAG_FILTER,
-            glow::NEAREST as _,
-        );
-        gl.tex_image_2d(
-            glow::TEXTURE_2D,
-            0,
-            glow::RGBA as _, // When generating a texture like this, you're probably working in linear color space
-            WIDTH as _,
-            HEIGHT as _,
-            0,
-            glow::RGBA,
-            glow::UNSIGNED_BYTE,
-            None,
-        )
-    }
-
-    let id = textures.insert(gl_texture);
-    let renderer = Renderer::initialize(&gl, &mut imgui, &mut textures, false)?;
-
-    let mut window = GameWindow::new(window, renderer, id)?;
-    let mut event_pump = sdl.event_pump()?;
+    let mut ui = OhBoiUi::new(|e, gb| {
+        match e {
+            Event::KeyDown { keycode: Some(k), .. } => {
+                match k {
+                    Keycode::Z => gb.press(Key::Start),
+                    Keycode::X => gb.press(Key::Select),
+                    Keycode::A => gb.press(Key::A),
+                    Keycode::S => gb.press(Key::B),
+                    Keycode::Up => gb.press(Key::Up),
+                    Keycode::Down => gb.press(Key::Down),
+                    Keycode::Left => gb.press(Key::Left),
+                    Keycode::Right => gb.press(Key::Right),
+                    _ => {}
+                }
+            },
+            Event::KeyUp { keycode: Some(k), .. } => {
+                match k {
+                    Keycode::Z => gb.release(Key::Start),
+                    Keycode::X => gb.release(Key::Select),
+                    Keycode::A => gb.release(Key::A),
+                    Keycode::S => gb.release(Key::B),
+                    Keycode::Up => gb.release(Key::Up),
+                    Keycode::Down => gb.release(Key::Down),
+                    Keycode::Left => gb.release(Key::Left),
+                    Keycode::Right => gb.release(Key::Right),
+                    _ => {}
+                }
+            },
+            _ => {}
+        };
+        Ok(())
+    })?;
     'main: loop {
-        for event in event_pump.poll_iter() {
-            platform.handle_event(&mut imgui, &event);
-            match event {
-                Event::Quit { .. } => break 'main,
-                Event::KeyDown { keycode: Some(k), .. } => {
-                    match k {
-                        Keycode::Z => gb.press(Key::Start),
-                        Keycode::X => gb.press(Key::Select),
-                        Keycode::A => gb.press(Key::A),
-                        Keycode::S => gb.press(Key::B),
-                        Keycode::Up => gb.press(Key::Up),
-                        Keycode::Down => gb.press(Key::Down),
-                        Keycode::Left => gb.press(Key::Left),
-                        Keycode::Right => gb.press(Key::Right),
-                        _ => {}
-                    }
-                },
-                Event::KeyUp { keycode: Some(k), .. } => {
-                    match k {
-                        Keycode::Z => gb.release(Key::Start),
-                        Keycode::X => gb.release(Key::Select),
-                        Keycode::A => gb.release(Key::A),
-                        Keycode::S => gb.release(Key::B),
-                        Keycode::Up => gb.release(Key::Up),
-                        Keycode::Down => gb.release(Key::Down),
-                        Keycode::Left => gb.release(Key::Left),
-                        Keycode::Right => gb.release(Key::Right),
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            window.handle_event(&event);
-        }
-
         let mut rendered = false;
         while gb.cycle_counter() < 4194304 / 60 {
             gb.clock();
             if !rendered && gb.is_in_vblank() {
-                window.update_texture(&gl, &textures, &gb.screen());
+                ui.draw_game_screen(&gb.screen());
                 rendered = true;
             }
         }
         gb.reset_cycle_counter();
-        window.show(&gl, &textures, &mut platform, &mut imgui, &event_pump)?;
-        if window.should_close() {
-            break 'main;
+        match ui.show(&mut gb)? {
+            Open(path) => { gb = GameBoy::new(path)?; },
+            Close => break 'main,
+            _ => {}
         }
     }
 

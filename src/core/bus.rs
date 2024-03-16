@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::panic::Location;
 use std::rc::{Rc, Weak};
 use log::{trace, warn};
+use crate::core::audio::Apu;
 use crate::core::cpu::Cpu;
 use crate::core::gpu::Ppu;
 use crate::core::interrupts::{Interrupt, InterruptController};
@@ -51,6 +52,7 @@ pub(crate) struct Bus {
     timer: Rc<RefCell<Timer>>,
     joypad: Rc<RefCell<Joypad>>,
     cpu: Option<Rc<RefCell<Cpu>>>,
+    apu: Rc<RefCell<Apu>>,
     dma: Option<Rc<RefCell<DmaController>>>,
     cartridge: Rc<RefCell<Cartridge>>,
     interrupts: Rc<RefCell<InterruptController>>,
@@ -62,6 +64,7 @@ pub(crate) struct Bus {
 
 impl Bus {
     pub fn new(ppu: Rc<RefCell<Ppu>>,
+               apu: Rc<RefCell<Apu>>,
                timer: Rc<RefCell<Timer>>,
                joypad: Rc<RefCell<Joypad>>,
                interrupts: Rc<RefCell<InterruptController>>,
@@ -71,6 +74,7 @@ impl Bus {
             timer,
             joypad,
             cpu: None,
+            apu,
             dma: None,
             cartridge,
             interrupts,
@@ -101,6 +105,7 @@ impl Bus {
             0xFF06 => (*self.timer).borrow_mut().set_tma(val),
             0xFF07 => (*self.timer).borrow_mut().set_tac(val),
             0xFF0F => (*self.interrupts).borrow_mut().set_interrupt_request(val),
+            0xFF10..=0xFF3F => (*self.apu).borrow_mut().write(addr, val),
             0xFF46 => (*self.dma.as_ref().unwrap()).borrow_mut().trigger(val),
             0xFF40..=0xFF4F => (*self.ppu).borrow_mut().write(addr, val, false),
             _ => {
@@ -119,6 +124,7 @@ impl Bus {
             0xFF06 => (*self.timer).borrow_mut().tma,
             0xFF07 => (*self.timer).borrow_mut().tac(),
             0xFF0F => (*self.interrupts).borrow_mut().get_interrupt_request(),
+            0xFF10..=0xFF3F => (*self.apu).borrow().read(addr),
             0xFF46 => (*self.dma.as_ref().unwrap()).borrow().mem_index(),
             0xFF40..=0xFF4F => (*self.ppu).borrow_mut().read(addr, false),
             0xFF50 => 1,

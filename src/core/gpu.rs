@@ -529,7 +529,6 @@ impl Ppu {
                 PpuState::PixelTransfer => {
                     self.pixel_transfer();
                     self.step_pixel_fetcher();
-                    self.scanline_counter += 1;
                 },
                 _ => {}
             };
@@ -572,33 +571,31 @@ impl Ppu {
     }
 
     fn oam_search(&mut self) {
-        if self.scanline_counter == 80 {
-            self.sprites.clear();
-            for i in (0..0xA0).step_by(4) {
-                let oam_index = i as usize;
-                let sprite = Sprite::new(i, &self.oam[oam_index..oam_index + 4]);
-                let obj_size = if self.lcdc & lcdc_flags::OBJ_SIZE != 0 { 16 } else { 8 };
-                let visible_range = (sprite.y..(sprite.y.wrapping_add(obj_size)));
-                if visible_range.contains(&(self.ly as u8 + 16)) {
-                    self.sprites.push(sprite);
-                }
-                if self.sprites.len() == 10 {
-                    break;
-                }
+        self.sprites.clear();
+        for i in (0..0xA0).step_by(4) {
+            let oam_index = i as usize;
+            let sprite = Sprite::new(i, &self.oam[oam_index..oam_index + 4]);
+            let obj_size = if self.lcdc & lcdc_flags::OBJ_SIZE != 0 { 16 } else { 8 };
+            let visible_range = (sprite.y..(sprite.y.wrapping_add(obj_size)));
+            if visible_range.contains(&(self.ly as u8 + 16)) {
+                self.sprites.push(sprite);
             }
-            self.sprites.sort_by(|a, b| a.x.cmp(&b.x));
-
-            let x = self.scroll_x;
-            let y = (self.ly as u8).wrapping_add(self.scroll_y);
-            self.rendering_window = false;
-            let tilemap = if self.lcdc & lcdc_flags::BG_TILE_MAP == 0 { 0x1800 } else { 0x1C00 };
-            self.pixel_fetcher.start(x, y, tilemap, self.scroll_x & 0b111);
-
-            self.bg_fifo.clear();
-            self.spr_fifo.clear();
-
-            self.update_state(PpuState::PixelTransfer);
+            if self.sprites.len() == 10 {
+                break;
+            }
         }
+        self.sprites.sort_by(|a, b| a.x.cmp(&b.x));
+
+        let x = self.scroll_x;
+        let y = (self.ly as u8).wrapping_add(self.scroll_y);
+        self.rendering_window = false;
+        let tilemap = if self.lcdc & lcdc_flags::BG_TILE_MAP == 0 { 0x1800 } else { 0x1C00 };
+        self.pixel_fetcher.start(x, y, tilemap, self.scroll_x & 0b111);
+
+        self.bg_fifo.clear();
+        self.spr_fifo.clear();
+
+        self.update_state(PpuState::PixelTransfer);
     }
 
     fn pixel_transfer(&mut self) {

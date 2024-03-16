@@ -69,9 +69,7 @@ impl Timer {
         if !self.written_tma {
             self.tima = val;
         }
-        if self.timer_overflow {
-            self.timer_overflow = false;
-        }
+        self.timer_overflow = false;
     }
 
     pub fn set_tma(&mut self, val: u8) {
@@ -93,9 +91,7 @@ impl Timer {
     }
 
     pub fn clock(&mut self) {
-        if self.written_tma {
-            self.written_tma = false;
-        }
+        self.written_tma = false;
         if self.timer_overflow {
             self.written_tma = true;
             self.timer_overflow = false;
@@ -119,9 +115,7 @@ impl Timer {
             let (tima, overflow) = self.tima.overflowing_add(1);
             self.tima = tima;
             self.old_output = false;
-            if !self.timer_overflow {
-                self.timer_overflow = overflow;
-            }
+            self.timer_overflow |= overflow;
         }
     }
     pub fn reset(&mut self) {

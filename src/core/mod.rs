@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
+use crate::core::audio::Apu;
 use crate::core::bus::Bus;
 use crate::core::cpu::Cpu;
 use crate::core::gpu::{Ppu, PpuState};
@@ -10,6 +11,7 @@ use crate::core::joypad::{Joypad, Key};
 use crate::core::memory::cartridge::Cartridge;
 use crate::core::memory::dma::DmaController;
 use crate::core::timers::Timer;
+use crate::core::utils::Counter;
 
 mod traits;
 pub(in crate::core) mod interrupts;
@@ -19,12 +21,22 @@ mod bus;
 pub mod cpu;
 mod memory;
 mod gpu;
+mod audio;
+mod utils;
+
+pub struct Audio<AudioCallback: FnMut(&[f32])> {
+    buffer: Vec<f32>,
+    buffer_pointer: usize,
+    downsample: Counter,
+    audio_callback: Option<Box<AudioCallback>>,
+}
 
 pub struct GameBoy {
     joypad: Rc<RefCell<Joypad>>,
     bus: Rc<RefCell<Bus>>,
     cpu: Rc<RefCell<Cpu>>,
     ppu: Rc<RefCell<Ppu>>,
+    apu: Rc<RefCell<Apu>>,
     dma: Rc<RefCell<DmaController>>,
     timer: Rc<RefCell<Timer>>,
     cartridge: Rc<RefCell<Cartridge>>,
@@ -42,8 +54,8 @@ impl GameBoy {
         let joypad = Rc::new(RefCell::new(Joypad::new(Rc::clone(&interrupts))));
 
         let ppu = Rc::new(RefCell::new(Ppu::new(Rc::clone(&interrupts))));
-
-        let bus = Bus::new(Rc::clone(&ppu), Rc::clone(&timer), Rc::clone(&joypad),
+        let apu = Rc::new(RefCell::new(Apu::new(Rc::clone(&timer))));
+        let bus = Bus::new(Rc::clone(&ppu), Rc::clone(&apu), Rc::clone(&timer), Rc::clone(&joypad),
                                Rc::clone(&interrupts), Rc::clone(&cartridge));
 
         let cpu = Rc::new(RefCell::new(Cpu::new(Rc::clone(&interrupts), Bus::get_controller(&bus), is_cgb)));
@@ -53,7 +65,7 @@ impl GameBoy {
             b.set_cpu(Rc::clone(&cpu));
             b.set_dma_controller(Rc::clone(&dma));
         }
-        Ok(Self { joypad, bus, cpu, ppu, dma, timer, cartridge: Rc::clone(&cartridge), cycle_counter: 0 })
+        Ok(Self { joypad, bus, cpu, ppu, apu, dma, timer, cartridge: Rc::clone(&cartridge), cycle_counter: 0 })
     }
 
     pub fn clock(&mut self) {
@@ -63,9 +75,9 @@ impl GameBoy {
         }
         (*self.timer).borrow_mut().clock();
         (*self.ppu).borrow_mut().clock();
+        (*self.apu).borrow_mut().clock();
         (*self.cpu).borrow_mut().clock();
-
-        self.cycle_counter += 1;
+        self.cycle_counter += 4;
     }
 
     pub fn reset_cycle_counter(&mut self) {
@@ -92,4 +104,7 @@ impl GameBoy {
         (*self.joypad).borrow_mut().release(key);
     }
 
+    pub fn audio_output(&self) -> Option<(f32, f32)> {
+        (*self.apu).borrow_mut().get_current_output()
+    }
 }

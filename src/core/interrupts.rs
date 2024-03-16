@@ -23,12 +23,10 @@ pub struct InterruptController {
 
 impl InterruptController {
     pub fn new() -> Self {
-        trace!("Building InterruptController");
         InterruptController { ime: false, int_request: INITIAL_INTERRUPT_REQUEST, int_enable: 0 }
     }
 
     pub fn reset(&mut self) {
-        trace!("Resetting InterruptController");
         self.ime = false;
         self.int_request = INITIAL_INTERRUPT_REQUEST;
         self.int_enable = 0;
