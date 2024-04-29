@@ -3,6 +3,8 @@ use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::rc::Rc;
 use log::{debug, trace, warn};
+use crate::core::gpu::lcd_stat_flags::UNUSED;
+use crate::core::gpu::lcdc_flags::{BG_WINDOW_ENABLE_PRIORITY, BG_WINDOW_TILE_DATA, LCD_ENABLE};
 use crate::core::interrupts::{Interrupt, InterruptController};
 
 const WIDTH: usize = 160;
@@ -185,6 +187,20 @@ impl PixelFetcher {
             rendering_sprites: false,
             dot_clock_divider: false,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.current_sprite = Sprite::default();
+        self.state = PixelFetcherState::GetTile;
+        self.tile_row_index = 0;
+        self.tile_row_addr = 0;
+        self.tile_index = 0;
+        self.tile_y = 0;
+        self.scroll_quantity = 0;
+        self.sprite_tile_index = 0;
+        self.sprite_tile_y = 0;
+        self.rendering_sprites = false;
+        self.dot_clock_divider = false;
     }
 
     pub fn start(&mut self, x: u8, y: u8, tile_map: u16, scroll: u8) {
@@ -429,6 +445,38 @@ impl Ppu {
             pixel_fetcher: PixelFetcher::new(),
             rendering_window: true
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.state = PpuState::VBlank;
+        self.lcdc = LCD_ENABLE | BG_WINDOW_TILE_DATA | BG_WINDOW_ENABLE_PRIORITY;
+        self.lcd_stat = UNUSED | PpuState::VBlank as u8;
+        self.scroll_x = 0;
+        self.scroll_y = 0;
+        self.ly = 0;
+        self.ly_compare = 0;
+        self.window_x = 0;
+        self.window_y = 0;
+        self.bg_palette = DmgPalette::new(0xFC);
+        self.obj0_palette = DmgPalette::new(0xFF);
+        self.obj1_palette = DmgPalette::new(0xFF);
+        self.vram_bank = 0;
+        self.internal_window_counter = 0;
+        self.current_pixel = 0;
+        self.scanline_counter = 0;
+        self.pixel_fetcher.reset();
+        self.rendering_window = true;
+
+        self.bg_fifo.clear();
+        self.spr_fifo.clear();
+        self.sprites.clear();
+
+        self.screen = [0; WIDTH * HEIGHT * 4];
+        self.vram = [0; 0x2000];
+        self.oam = [0; 0xA0];
+        self.tileset0 = [Tile::default(); 384];
+        self.tileset1 = [Tile::default(); 384];
+
     }
 
     fn read_vram(&self, addr: u16) -> u8 {

@@ -7,7 +7,7 @@ impl Apu {
     pub fn new(timer: Rc<RefCell<Timer>>) -> Self {
         Apu {}
     }
-
+    pub fn reset(&mut self) {}
     pub fn read(&self, addr: u16) -> u8 {
         0
     }

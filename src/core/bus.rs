@@ -84,6 +84,11 @@ impl Bus {
         }))
     }
 
+    pub fn reset(&mut self) {
+        self.hram = vec![0; 0x7F];
+        self.iospace = vec![0; 0x80];
+    }
+
     pub fn get_controller(this: &Rc<RefCell<Self>>) -> BusController {
         BusController::new(Rc::downgrade(this))
     }
