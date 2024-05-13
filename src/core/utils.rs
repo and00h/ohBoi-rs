@@ -39,9 +39,9 @@ pub(crate) struct FallingEdgeDetector {
 }
 
 impl FallingEdgeDetector {
-    pub fn new() -> Self {
-        Self { old: false }
-    }
+    //pub fn new() -> Self {
+    //    Self { old: false }
+    //}
 
     pub fn with_initial_value(initial: bool) -> Self {
         Self { old: initial }

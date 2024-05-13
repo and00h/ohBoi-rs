@@ -13,7 +13,7 @@ const FREQ_1: u16 = 0b1000;
 const FREQ_2: u16 = 0b100000;
 const FREQ_3: u16 = 0b10000000;
 
-const TIMER_INCREMENTS: [u32; 4] = [1024, 16, 64, 256];
+//const TIMER_INCREMENTS: [u32; 4] = [1024, 16, 64, 256];
 const TAC_FREQS: [u16; 4] = [
     FREQ_0, FREQ_1, FREQ_2, FREQ_3
 ];

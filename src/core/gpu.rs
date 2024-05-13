@@ -1,8 +1,7 @@
 use std::cell::RefCell;
-use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::rc::Rc;
-use log::{debug, trace, warn};
+use log::{trace, warn};
 use crate::core::gpu::lcd_stat_flags::UNUSED;
 use crate::core::gpu::lcdc_flags::{BG_WINDOW_ENABLE_PRIORITY, BG_WINDOW_TILE_DATA, LCD_ENABLE};
 use crate::core::interrupts::{Interrupt, InterruptController};
@@ -624,7 +623,7 @@ impl Ppu {
             let oam_index = i as usize;
             let sprite = Sprite::new(i, &self.oam[oam_index..oam_index + 4]);
             let obj_size = if self.lcdc & lcdc_flags::OBJ_SIZE != 0 { 16 } else { 8 };
-            let visible_range = (sprite.y..(sprite.y.wrapping_add(obj_size)));
+            let visible_range = sprite.y..(sprite.y.wrapping_add(obj_size));
             if visible_range.contains(&(self.ly as u8 + 16)) {
                 self.sprites.push(sprite);
             }

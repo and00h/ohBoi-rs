@@ -6,7 +6,7 @@ use imgui::{Condition, StyleVar, TextureId, Textures, Ui};
 use imgui_glow_renderer::Renderer;
 use imgui_glow_renderer::glow::{Context, HasContext, Texture};
 use imgui_sdl2_support::SdlPlatform;
-use sdl2::{EventPump, Sdl};
+use sdl2::{Sdl};
 use sdl2::video::{GLContext, GLProfile, Window};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -20,7 +20,7 @@ const GB_SCREEN_HEIGHT: usize = 144;
 pub enum GameWindowEvent {
     Close,
     Open(PathBuf),
-    KeyPress(Keycode),
+    //KeyPress(Keycode),
     Nothing
 }
 
@@ -102,7 +102,8 @@ pub struct OhBoiUi {
     sdl_window: Window,
     renderer: Renderer,
     game_window: GameWindow,
-    textures: Textures<Texture>
+    textures: Textures<Texture>,
+    audio_device: sdl2::audio::AudioQueue<f32>,
 }
 
 impl OhBoiUi {
@@ -143,7 +144,15 @@ impl OhBoiUi {
         let renderer = Renderer::initialize(&gl, &mut imgui, &mut textures, false)?;
         let game_window = GameWindow::new(gb_screen_texture);
 
-        Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, textures })
+        let audio_context = sdl.audio().unwrap();
+        let spec = sdl2::audio::AudioSpecDesired {
+            freq: Some(44100),
+            channels: Some(2),
+            samples: Some(2048)
+        };
+        let audio_device = audio_context.open_queue::<f32, _>(None, &spec).unwrap();
+        audio_device.resume();
+        Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, textures, audio_device })
     }
 
     #[inline]
@@ -181,7 +190,10 @@ impl OhBoiUi {
         Nothing
     }
 
-    pub fn show(&mut self, gb: &mut GameBoy) -> Result<GameWindowEvent, Box<dyn Error>> {
+    pub fn audio_callback(&mut self, audio: &[f32]) {
+        self.audio_device.queue(audio);
+    }
+    pub fn show(&mut self, gb: &mut GameBoy, text: Option<String>) -> Result<GameWindowEvent, Box<dyn Error>> {
         let quit = self.process_sdl_events(gb)?;
         if quit {
             return Ok(Close);
@@ -192,7 +204,7 @@ impl OhBoiUi {
         let ui = self.imgui.new_frame();
 
         let menu_event = Self::main_menu_bar(ui);
-        self.game_window.show(ui, self.sdl_window.size(), None);
+        self.game_window.show(ui, self.sdl_window.size(), text);
 
         let draw_data = self.imgui.render();
         unsafe { self.gl.clear(glow::COLOR_BUFFER_BIT) };
@@ -233,7 +245,7 @@ impl GameWindow {
         Self { texture }
     }
 
-    fn game_screen(&self, ui: &mut Ui, screen_pos: [f32; 2], mut screen_size: [f32; 2], text: Option<&str>) {
+    fn game_screen(&self, ui: &mut Ui, screen_pos: [f32; 2], mut screen_size: [f32; 2], text: Option<String>) {
         let _a = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
         let _b = ui.push_style_var(StyleVar::ChildBorderSize(0.0));
 
@@ -252,7 +264,7 @@ impl GameWindow {
             }).unwrap();
     }
 
-    pub fn show(&self, ui: &mut Ui, sdl_window_size: (u32, u32), text: Option<&str>) {
+    pub fn show(&self, ui: &mut Ui, sdl_window_size: (u32, u32), text: Option<String>) {
         let [_, imgui_menu_height] = ui.item_rect_size();
         let game_screen_size = [sdl_window_size.0 as f32, sdl_window_size.1 as f32 - imgui_menu_height];
         self.game_screen(ui, [0.0, imgui_menu_height], game_screen_size, text);

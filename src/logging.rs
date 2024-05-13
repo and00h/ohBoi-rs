@@ -1,4 +1,3 @@
-use std::hash::Hasher;
 use fern::colors::{Color, ColoredLevelConfig};
 
 pub fn setup_logger(verbosity: u64, cpu_verbosity: u64) -> Result<(), fern::InitError> {

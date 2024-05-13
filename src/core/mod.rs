@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
-use crate::core::audio::Apu;
+use crate::core::audio::{Apu};
 use crate::core::bus::Bus;
 use crate::core::cpu::Cpu;
 use crate::core::gpu::{Ppu, PpuState};
@@ -23,13 +23,6 @@ mod memory;
 mod gpu;
 mod audio;
 mod utils;
-
-pub struct Audio<AudioCallback: FnMut(&[f32])> {
-    buffer: Vec<f32>,
-    buffer_pointer: usize,
-    downsample: Counter,
-    audio_callback: Option<Box<AudioCallback>>,
-}
 
 pub struct GameBoy {
     joypad: Rc<RefCell<Joypad>>,
