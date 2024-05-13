@@ -1,5 +1,3 @@
-#![feature(iter_array_chunks)]
-
 mod logging;
 pub mod core;
 mod ohboi;
@@ -7,6 +5,7 @@ mod ui;
 
 use std::error::Error;
 use std::fs::File;
+use std::io::Write;
 use std::path::PathBuf;
 use std::thread;
 use log::{info};
@@ -21,6 +20,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut gb = GameBoy::new(PathBuf::from("./tetris.gb"))?;
     let mut ui = OhBoiUi::new()?;
     let mut audio_queue = vec![0.0; 2048];
+    let mut ch1_queue = vec![0.0; 1024];
+    let mut ch2_queue = vec![0.0; 1024];
+    let mut ch3_queue = vec![0.0; 1024];
+    let mut ch4_queue = vec![0.0; 1024];
+    
     let mut buffer_pointer = 0;
     'main: loop {
         let current_time = std::time::Instant::now();
@@ -31,18 +35,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             gb.clock();
             match gb.audio_output() {
                 Some(out) => {
+                    let (ch1, ch2, ch3, ch4) = gb.get_channels_output();
+                    ch1_queue[buffer_pointer / 2] = ch1;
+                    ch2_queue[buffer_pointer / 2] = ch2;
+                    ch3_queue[buffer_pointer / 2] = ch3;
+                    ch4_queue[buffer_pointer / 2] = ch4;
+                    
                     audio_queue[buffer_pointer] = out.0;
                     buffer_pointer += 1;
                     audio_queue[buffer_pointer] = out.1;
                     buffer_pointer += 1;
                     if buffer_pointer == 2048 {
-                        let res = audio_queue.iter()
-                            .array_chunks::<2>()
-                            .step_by(speed as usize)
-                            .flatten()
-                            .copied()
-                            .collect::<Vec<f32>>();
-                        ui.audio_callback(&res);
+                        ui.audio_callback(&audio_queue);
                         buffer_pointer = 0;
                     }
                 }
@@ -54,13 +58,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         gb.reset_cycle_counter();
-        match ui.show(&mut gb, Some(fps))? {
+        match ui.show(&mut gb, None, (&ch1_queue, &ch2_queue, &ch3_queue, &ch4_queue))? {
             Open(path) => gb.load_new_game(path)?,
             Close => break 'main,
             _ => {}
         }
         let elapsed = current_time.elapsed();
-        fps = format!("{}", 1.0 / elapsed.as_secs_f64() * 100.0);
+        fps = format!("FPS: {}", 1.0 / elapsed.as_secs_f64());
+        if elapsed.as_secs_f64() < 1.0 / 60.0 {
+            thread::sleep(std::time::Duration::from_secs_f64(1.0 / 60.0) - elapsed);
+        }
     }
 
     Ok(())

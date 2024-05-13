@@ -101,6 +101,10 @@ impl GameBoy {
         (*self.apu).borrow_mut().get_current_output()
     }
 
+    pub fn get_channels_output(&self) -> (f32, f32, f32, f32) {
+        (*self.apu).borrow_mut().get_channels_output()
+    }
+
     pub fn load_new_game(&mut self, rom_path: PathBuf) -> io::Result<()> {
         self.cartridge.replace(Cartridge::open(rom_path)?);
 
