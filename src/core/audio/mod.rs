@@ -209,6 +209,14 @@ impl Apu {
     pub fn get_current_output(&mut self) -> Option<(f32, f32)> {
         self.current_output.take()
     }
+    pub fn get_channels_output(&self) -> (f32, f32, f32, f32) {
+        let ch1_out = self.square1.output() as f32 / 15.0;
+        let ch2_out = self.square2.output() as f32 / 15.0;
+        let ch3_out = self.wave_ch.output() as f32 / 15.0;
+        let ch4_out = self.noise.output() as f32 / 15.0;
+
+        (ch1_out, ch2_out, ch3_out, ch4_out)
+    }
 
     pub fn reset(&mut self) {
         self.nr50.0 = 0x77;

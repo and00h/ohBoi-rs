@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::path::PathBuf;
+use std::sync::atomic::compiler_fence;
 
 use imgui_glow_renderer::glow::{NativeTexture, PixelUnpackData};
 use imgui::{Condition, StyleVar, TextureId, Textures, Ui};
@@ -12,14 +13,16 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use crate::core::GameBoy;
 use crate::core::joypad::Key;
-use crate::ui::GameWindowEvent::{Close, Nothing, Open};
+use crate::ui::GameWindowEvent::{Close, Nothing, Open, ToggleWaveform};
 
 const GB_SCREEN_WIDTH: usize = 160;
 const GB_SCREEN_HEIGHT: usize = 144;
 
+#[derive(Debug, Clone)]
 pub enum GameWindowEvent {
     Close,
     Open(PathBuf),
+    ToggleWaveform,
     //KeyPress(Keycode),
     Nothing
 }
@@ -91,6 +94,7 @@ pub struct OhBoiUi {
     sdl_window: Window,
     renderer: Renderer,
     game_window: GameWindow,
+    waveform_window: WaveformWindow,
     textures: Textures<Texture>,
     audio_device: sdl2::audio::AudioQueue<f32>,
 }
@@ -132,6 +136,7 @@ impl OhBoiUi {
         let gb_screen_texture = new_texture(GB_SCREEN_WIDTH, GB_SCREEN_HEIGHT, &gl, &mut textures)?;
         let renderer = Renderer::initialize(&gl, &mut imgui, &mut textures, false)?;
         let game_window = GameWindow::new(gb_screen_texture);
+        let waveform_window = WaveformWindow::new();
 
         let audio_context = sdl.audio().unwrap();
         let spec = sdl2::audio::AudioSpecDesired {
@@ -141,7 +146,7 @@ impl OhBoiUi {
         };
         let audio_device = audio_context.open_queue::<f32, _>(None, &spec).unwrap();
         audio_device.resume();
-        Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, textures, audio_device })
+        Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, waveform_window, textures, audio_device })
     }
 
     #[inline]
@@ -173,6 +178,12 @@ impl OhBoiUi {
                 }
                 menu.end();
             }
+            if let Some(menu) = ui.begin_menu("Windows") {
+                if ui.menu_item_config("Waveform").selected(false).build() {
+                    return ToggleWaveform;
+                }
+                menu.end();
+            }
             menubar.end();
         }
 
@@ -182,7 +193,7 @@ impl OhBoiUi {
     pub fn audio_callback(&mut self, audio: &[f32]) {
         self.audio_device.queue(audio);
     }
-    pub fn show(&mut self, gb: &mut GameBoy, text: Option<String>) -> Result<GameWindowEvent, Box<dyn Error>> {
+    pub fn show(&mut self, gb: &mut GameBoy, text: Option<String>, sample: (&[f32], &[f32], &[f32], &[f32])) -> Result<GameWindowEvent, Box<dyn Error>> {
         let quit = self.process_sdl_events(gb)?;
         if quit {
             return Ok(Close);
@@ -194,6 +205,13 @@ impl OhBoiUi {
 
         let menu_event = Self::main_menu_bar(ui);
         self.game_window.show(ui, self.sdl_window.size(), text);
+        self.waveform_window.show(ui, sample);
+        
+        match menu_event.clone() {
+            Open(path) => gb.load_new_game(path.clone())?,
+            ToggleWaveform => self.waveform_window.toggle(),
+            _ => {}
+        }
 
         let draw_data = self.imgui.render();
         unsafe { self.gl.clear(glow::COLOR_BUFFER_BIT) };
@@ -223,6 +241,56 @@ impl OhBoiUi {
     }
 }
 
+pub struct WaveformWindow {
+    toggle: bool,
+}
+
+impl WaveformWindow {
+    pub fn new() -> Self {
+        Self { toggle: false }
+    }
+    pub fn show(&self, ui: &mut Ui, audio: (&[f32], &[f32], &[f32], &[f32])) {
+        if !self.toggle {
+            return;
+        }
+        ui.window("Waveform")
+            .size([400.0, 380.0], Condition::FirstUseEver)
+            .build(|| {
+                let sz = ui.content_region_avail();
+                let wav_sz = [sz[0], sz[1] / 4.0 - ui.clone_style().frame_padding[1]];
+                imgui::PlotLines::new(ui, "Square 1", audio.0)
+                    .graph_size(wav_sz)
+                    .scale_min(0.0)
+                    .scale_max(1.0)
+                    .overlay_text("Square 1")
+                    .build();
+                imgui::PlotLines::new(ui, "Square 2", audio.1)
+                    .graph_size(wav_sz)
+                    .scale_min(0.0)
+                    .scale_max(1.0)
+                    .overlay_text("Square 2")
+                    .build();
+                imgui::PlotLines::new(ui, "Wave", audio.2)
+                    .graph_size(wav_sz)
+                    .scale_min(0.0)
+                    .scale_max(1.0)
+                    .overlay_text("Wave")
+                    .build();
+                imgui::PlotLines::new(ui, "Noise", audio.3)
+                    .graph_size(wav_sz)
+                    .scale_min(0.0)
+                    .scale_max(1.0)
+                    .overlay_text("Noise")
+                    .build();
+                
+            });
+    }
+
+    pub fn toggle(&mut self) {
+        self.toggle = !self.toggle;
+    }
+}
+
 pub struct GameWindow {
     texture: TextureId,
 }
@@ -238,16 +306,15 @@ impl GameWindow {
 
         ui.window("ohBoi")
             .position(screen_pos, Condition::FirstUseEver)
-            .size(screen_size, Condition::Always)
-            .movable(false)
+            .size(screen_size, Condition::FirstUseEver)
+            .movable(true)
             .draw_background(false)
-            .no_decoration()
             .build(|| {
                 if let Some(t) = text {
                     ui.text(t);
                     screen_size[1] -= ui.text_line_height_with_spacing();
                 }
-                imgui::Image::new(self.texture, screen_size).build(ui);
+                imgui::Image::new(self.texture, ui.content_region_avail()).build(ui);
             }).unwrap();
     }
 
