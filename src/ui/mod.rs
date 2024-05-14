@@ -207,7 +207,7 @@ impl OhBoiUi {
         self.game_window.show(ui, self.sdl_window.size(), text);
         let waveform_pos = [(GB_SCREEN_WIDTH * 2) as f32, 10.0];
         self.waveform_window.show(ui, waveform_pos, sample);
-        
+
         match menu_event.clone() {
             ToggleWaveform => self.waveform_window.toggle(),
             _ => {}
@@ -283,7 +283,7 @@ impl WaveformWindow {
                     .scale_max(1.0)
                     .overlay_text("Noise")
                     .build();
-                
+
             });
     }
 

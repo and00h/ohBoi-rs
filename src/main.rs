@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut ch2_queue = vec![0.0; 2048];
     let mut ch3_queue = vec![0.0; 2048];
     let mut ch4_queue = vec![0.0; 2048];
-    
+
     let mut buffer_pointer = 0;
     'main: loop {
         let current_time = std::time::Instant::now();
@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     ch2_queue[buffer_pointer / 2] = ch2;
                     ch3_queue[buffer_pointer / 2] = ch3;
                     ch4_queue[buffer_pointer / 2] = ch4;
-                    
+
                     audio_queue[buffer_pointer] = out.0;
                     buffer_pointer += 1;
                     audio_queue[buffer_pointer] = out.1;
