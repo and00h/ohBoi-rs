@@ -19,12 +19,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     info!("Starting ohBoi");
     let mut gb = GameBoy::new(PathBuf::from("./tetris.gb"))?;
     let mut ui = OhBoiUi::new()?;
-    let mut audio_queue = vec![0.0; 2048];
-    let mut ch1_queue = vec![0.0; 1024];
-    let mut ch2_queue = vec![0.0; 1024];
-    let mut ch3_queue = vec![0.0; 1024];
-    let mut ch4_queue = vec![0.0; 1024];
-
+    let mut audio_queue = vec![0.0; 4096];
+    let mut ch1_queue = vec![0.0; 2048];
+    let mut ch2_queue = vec![0.0; 2048];
+    let mut ch3_queue = vec![0.0; 2048];
+    let mut ch4_queue = vec![0.0; 2048];
+    
     let mut buffer_pointer = 0;
     'main: loop {
         let current_time = std::time::Instant::now();
@@ -40,12 +40,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                     ch2_queue[buffer_pointer / 2] = ch2;
                     ch3_queue[buffer_pointer / 2] = ch3;
                     ch4_queue[buffer_pointer / 2] = ch4;
-
+                    
                     audio_queue[buffer_pointer] = out.0;
                     buffer_pointer += 1;
                     audio_queue[buffer_pointer] = out.1;
                     buffer_pointer += 1;
-                    if buffer_pointer == 2048 {
+                    if buffer_pointer == 4096 {
                         ui.audio_callback(&audio_queue);
                         buffer_pointer = 0;
                     }

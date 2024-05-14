@@ -118,7 +118,7 @@ impl OhBoiUi {
 
         let video_subsystem = sdl.video()?;
         let sdl_window =
-            video_subsystem.window("ohboi", GB_SCREEN_WIDTH as u32, GB_SCREEN_HEIGHT as u32)
+            video_subsystem.window("ohboi", 640, 480)
                 .allow_highdpi()
                 .opengl()
                 .resizable()
@@ -205,10 +205,10 @@ impl OhBoiUi {
 
         let menu_event = Self::main_menu_bar(ui);
         self.game_window.show(ui, self.sdl_window.size(), text);
-        self.waveform_window.show(ui, sample);
+        let waveform_pos = [(GB_SCREEN_WIDTH * 2) as f32, 10.0];
+        self.waveform_window.show(ui, waveform_pos, sample);
         
         match menu_event.clone() {
-            Open(path) => gb.load_new_game(path.clone())?,
             ToggleWaveform => self.waveform_window.toggle(),
             _ => {}
         }
@@ -249,11 +249,12 @@ impl WaveformWindow {
     pub fn new() -> Self {
         Self { toggle: false }
     }
-    pub fn show(&self, ui: &mut Ui, audio: (&[f32], &[f32], &[f32], &[f32])) {
+    pub fn show(&self, ui: &mut Ui, pos: [f32; 2], audio: (&[f32], &[f32], &[f32], &[f32])) {
         if !self.toggle {
             return;
         }
         ui.window("Waveform")
+            .position(pos, Condition::FirstUseEver)
             .size([400.0, 380.0], Condition::FirstUseEver)
             .build(|| {
                 let sz = ui.content_region_avail();
@@ -320,7 +321,7 @@ impl GameWindow {
 
     pub fn show(&self, ui: &mut Ui, sdl_window_size: (u32, u32), text: Option<String>) {
         let [_, imgui_menu_height] = ui.item_rect_size();
-        let game_screen_size = [sdl_window_size.0 as f32, sdl_window_size.1 as f32 - imgui_menu_height];
+        let game_screen_size = [(GB_SCREEN_WIDTH * 2) as f32, (GB_SCREEN_HEIGHT * 2) as f32];
         self.game_screen(ui, [0.0, imgui_menu_height], game_screen_size, text);
     }
 
