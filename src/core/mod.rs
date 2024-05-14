@@ -112,4 +112,8 @@ impl GameBoy {
 
         Ok(())
     }
+    
+    pub fn close_game(&self) {
+        (*self.cartridge).borrow().save();
+    }
 }

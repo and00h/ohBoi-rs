@@ -3,6 +3,7 @@ use crate::core::memory::cartridge::{Cartridge, CartridgeHeader, CartridgeType};
 
 pub(super) mod none;
 pub(super) mod mbc1;
+pub(super) mod mbc5;
 
 enum BankingMode {
     ROM,
@@ -46,9 +47,16 @@ pub(super) trait Mbc {
 pub(super) fn make_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) -> Box<dyn Mbc> {
     match header.cart_type {
         CartridgeType::None => Box::new(none::None::new(rom)),
-        CartridgeType::MBC1 | CartridgeType::MBC1_RAM =>
-            Box::new(mbc1::Mbc1::new(rom, header, false)),
-        CartridgeType::MBC1_RAM_BATTERY => Box::new(mbc1::Mbc1::new(rom, header, true)),
+        CartridgeType::MBC1 =>
+            Box::new(mbc1::Mbc1::new(rom, header, None, false)),
+        CartridgeType::MBC1_RAM =>
+            Box::new(mbc1::Mbc1::new(rom, header, ram, false)),
+        CartridgeType::MBC1_RAM_BATTERY => Box::new(mbc1::Mbc1::new(rom, header, ram, true)),
+        CartridgeType::MBC5 =>
+            Box::new(mbc5::Mbc5::new(rom, header, None, false)),
+        CartridgeType::MBC5_RAM =>
+            Box::new(mbc5::Mbc5::new(rom, header, ram, false)),
+        CartridgeType::MBC5_RAM_BATTERY => Box::new(mbc5::Mbc5::new(rom, header, ram, true)),
         t => {
             warn!("Unimplemented cartridge type {:?}. Falling back to None", t);
             Box::new(none::None::new(rom))

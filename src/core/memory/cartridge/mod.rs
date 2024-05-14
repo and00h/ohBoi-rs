@@ -2,7 +2,7 @@ mod mbc;
 
 use std::fs::File;
 use std::path::PathBuf;
-use std::io::{Read, Result};
+use std::io::{Read, Result, Write};
 use log::warn;
 use crate::core::memory::cartridge::mbc::{make_mbc, Mbc};
 
@@ -11,7 +11,10 @@ pub enum CartridgeType {
     None = 0x00,
     MBC1 = 0x01,
     MBC1_RAM = 0x02,
-    MBC1_RAM_BATTERY = 0x03
+    MBC1_RAM_BATTERY = 0x03,
+    MBC5 = 0x19,
+    MBC5_RAM = 0x1A,
+    MBC5_RAM_BATTERY = 0x1B
 }
 
 impl From<u8> for CartridgeType {
@@ -21,6 +24,9 @@ impl From<u8> for CartridgeType {
             0x01 => Self::MBC1,
             0x02 => Self::MBC1_RAM,
             0x03 => Self::MBC1_RAM_BATTERY,
+            0x19 => Self::MBC5,
+            0x1A => Self::MBC5_RAM,
+            0x1B => Self::MBC5_RAM_BATTERY,
             _ => {
                 warn!("Unknown cartridge type 0x{:x}. Falling back to None", value);
                 Self::None
@@ -140,6 +146,14 @@ impl Cartridge {
             0x0000..=0x7FFF => self.mbc.write(addr, val),
             0xA000..=0xBFFF => self.mbc.write_ext_ram(addr, val),
             _ => warn!("Writing to invalid cartridge address 0x{:x} value {:x}", addr, val)
+        }
+    }
+    
+    pub fn save(&self) {
+        if self.mbc.has_ram() && self.mbc.has_battery() {
+            let mut f = File::create(&self.sav_path).expect("Failed to create save file");
+            warn!("Writing save file to {:?}", self.sav_path);
+            f.write_all(self.mbc.ram().unwrap()).expect("Failed to write save file");
         }
     }
 

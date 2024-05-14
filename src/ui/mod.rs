@@ -46,17 +46,6 @@ fn new_texture(w: usize, h: usize, gl: &Context, textures: &mut Textures<NativeT
     Ok(textures.insert(gl_texture))
 }
 
-fn menu_bar_event_handler(gb: &mut GameBoy, e: &GameWindowEvent) -> Result<bool, Box<dyn Error>> {
-    match e {
-        Open(path) => match gb.load_new_game(path.clone()) {
-            Ok(_) => Ok(false),
-            Err(e) => Err(Box::try_from(e).unwrap())
-        },
-        Close => Ok(true),
-        _ => Ok(false)
-    }
-}
-
 fn sdl_event_handler(e: &Event, gb: &mut GameBoy) -> Result<bool, Box<dyn Error>> {
     match e {
         Event::KeyDown { keycode: Some(k), .. } => {
@@ -211,8 +200,6 @@ impl OhBoiUi {
         self.renderer.render(&self.gl, &mut self.textures, draw_data).unwrap();
 
         self.sdl_window.gl_swap_window();
-
-        menu_bar_event_handler(gb, &menu_event)?;
 
         Ok(menu_event)
     }

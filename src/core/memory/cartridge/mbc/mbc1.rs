@@ -1,27 +1,31 @@
 use log::warn;
 use crate::core::memory::cartridge::CartridgeHeader;
-use crate::core::memory::cartridge::mbc::{BankingMode, calc_rom_size, RAM_BANK_SIZE, RAM_SIZE_MAP, ROM_BANK_SIZE};
+use crate::core::memory::cartridge::mbc::{BankingMode, RAM_BANK_SIZE, ROM_BANK_SIZE};
 use super::Mbc;
 
 pub(super) struct Mbc1 {
     rom: Vec<u8>,
     ram: Option<Vec<u8>>,
     ram_enabled: bool,
-    battery: bool,
     banking_mode: BankingMode,
+    battery: bool,
     rom_bank_hi: usize,
     rom_bank_lo: usize,
     n_rom_banks: usize,
 }
 
 impl Mbc1 {
-    pub fn new(rom: Vec<u8>, cart_header: &CartridgeHeader, battery: bool) -> Self {
+    pub fn new(rom: Vec<u8>, cart_header: &CartridgeHeader, sav: Option<Vec<u8>>, battery: bool) -> Self {
         Self {
             rom,
-            ram: if cart_header.ram_size != 0 { Some(vec![0; cart_header.ram_size]) } else { None },
+            ram: match sav {
+                Some(sav) => Some(sav),
+                None if cart_header.ram_size != 0 => Some(vec![0; cart_header.ram_size]),
+                _ => None
+            },
             ram_enabled: false,
-            battery,
             banking_mode: BankingMode::ROM,
+            battery,
             rom_bank_hi: 0,
             rom_bank_lo: 1,
             n_rom_banks: cart_header.rom_size / ROM_BANK_SIZE,
@@ -79,18 +83,18 @@ impl Mbc for Mbc1 {
         }
     }
 
-    fn rom(&self) -> &Vec<u8> {
-        &self.rom
+    fn has_battery(&self) -> bool {
+        self.battery
     }
+    fn has_ram(&self) -> bool {
+        matches!(self.ram, Some(_))
+    }
+
     fn ram(&self) -> Option<&Vec<u8>> {
         self.ram.as_ref()
     }
 
-    fn has_battery(&self) -> bool {
-        self.battery
-    }
-
-    fn has_ram(&self) -> bool {
-        matches!(self.ram, Some(_))
+    fn rom(&self) -> &Vec<u8> {
+        &self.rom
     }
 }

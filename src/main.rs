@@ -1,5 +1,3 @@
-#![feature(iter_array_chunks)]
-
 mod logging;
 pub mod core;
 mod ohboi;
@@ -36,13 +34,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     audio_queue[buffer_pointer] = out.1;
                     buffer_pointer += 1;
                     if buffer_pointer == 2048 {
-                        let res = audio_queue.iter()
-                            .array_chunks::<2>()
-                            .step_by(speed as usize)
-                            .flatten()
-                            .copied()
-                            .collect::<Vec<f32>>();
-                        ui.audio_callback(&res);
+                        ui.audio_callback(&audio_queue);
                         buffer_pointer = 0;
                     }
                 }
@@ -54,13 +46,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         gb.reset_cycle_counter();
-        match ui.show(&mut gb, Some(fps))? {
-            Open(path) => gb.load_new_game(path)?,
-            Close => break 'main,
+        match ui.show(&mut gb, None)? {
+            Open(path) => {
+                gb.close_game();
+                gb.load_new_game(path)?;
+            },
+            Close => {
+                gb.close_game();
+                break 'main;
+            },
             _ => {}
         }
         let elapsed = current_time.elapsed();
-        fps = format!("{}", 1.0 / elapsed.as_secs_f64() * 100.0);
+        fps = format!("FPS: {}", 1.0 / elapsed.as_secs_f64());
+        if elapsed.as_secs_f64() < 1.0 / 60.0 {
+            thread::sleep(std::time::Duration::from_secs_f64(1.0 / 60.0) - elapsed);
+        }
     }
 
     Ok(())
