@@ -88,7 +88,11 @@ pub struct Apu {
     square1: Square1,
     square2: Square2,
     wave_ch: WaveChannel,
-    noise: Noise
+    noise: Noise,
+    pub(crate) square1_enable: bool,
+    pub(crate) square2_enable: bool,
+    pub(crate) wave_enable: bool,
+    pub(crate) noise_enable: bool
 }
 
 impl Apu {
@@ -106,7 +110,11 @@ impl Apu {
             square1: Square1::new(),
             square2: Square2::new(),
             wave_ch: WaveChannel::new(),
-            noise: Noise::new()
+            noise: Noise::new(),
+            square1_enable: true,
+            square2_enable: true,
+            wave_enable: true,
+            noise_enable: true
         }
     }
 
@@ -130,10 +138,10 @@ impl Apu {
             if self.downsample_counter.step() {
                 self.downsample_counter.reset();
 
-                let ch1_out = self.square1.output() as f32 / 15.0;
-                let ch2_out = self.square2.output() as f32 / 15.0;
-                let ch3_out = self.wave_ch.output() as f32 / 15.0;
-                let ch4_out = self.noise.output() as f32 / 15.0;
+                let ch1_out = if self.square1_enable { self.square1.output() as f32 / 15.0 } else { 0.0 };
+                let ch2_out = if self.square2_enable { self.square2.output() as f32 / 15.0 } else { 0.0 };
+                let ch3_out = if self.wave_enable { self.wave_ch.output() as f32 / 15.0 } else { 0.0 };
+                let ch4_out = if self.noise_enable { self.noise.output() as f32 / 15.0 } else { 0.0 };
 
                 let volume_l = (self.nr50.left_volume() as f32) / 7.0;
                 let volume_r = (self.nr50.right_volume() as f32) / 7.0;
@@ -210,10 +218,10 @@ impl Apu {
         self.current_output.take()
     }
     pub fn get_channels_output(&self) -> (f32, f32, f32, f32) {
-        let ch1_out = self.square1.output() as f32 / 15.0;
-        let ch2_out = self.square2.output() as f32 / 15.0;
-        let ch3_out = self.wave_ch.output() as f32 / 15.0;
-        let ch4_out = self.noise.output() as f32 / 15.0;
+        let ch1_out = if self.square1_enable { self.square1.output() as f32 / 15.0 } else { 0.0 };
+        let ch2_out = if self.square2_enable { self.square2.output() as f32 / 15.0 } else { 0.0 };
+        let ch3_out = if self.wave_enable { self.wave_ch.output() as f32 / 15.0 } else { 0.0 };
+        let ch4_out = if self.noise_enable { self.noise.output() as f32 / 15.0 } else { 0.0 };
 
         (ch1_out, ch2_out, ch3_out, ch4_out)
     }

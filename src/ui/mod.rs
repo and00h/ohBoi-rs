@@ -127,7 +127,6 @@ impl OhBoiUi {
         let gl_context = sdl_window.gl_create_context()?;
         sdl_window.gl_make_current(&gl_context)?;
         sdl_window.subsystem().gl_set_swap_interval(1)?;
-
         let gl = unsafe {
             Context::from_loader_function(|s| video_subsystem.gl_get_proc_address(s) as _)
         };
@@ -205,8 +204,8 @@ impl OhBoiUi {
 
         let menu_event = Self::main_menu_bar(ui);
         self.game_window.show(ui, self.sdl_window.size(), text);
-        let waveform_pos = [(GB_SCREEN_WIDTH * 2) as f32, 10.0];
-        self.waveform_window.show(ui, waveform_pos, sample);
+        let waveform_pos = [(GB_SCREEN_WIDTH * 2) as f32, 20.0];
+        self.waveform_window.show(gb, ui, waveform_pos, sample);
 
         match menu_event.clone() {
             ToggleWaveform => self.waveform_window.toggle(),
@@ -243,13 +242,14 @@ impl OhBoiUi {
 
 pub struct WaveformWindow {
     toggle: bool,
+    ch_enable: (bool, bool, bool, bool)
 }
 
 impl WaveformWindow {
     pub fn new() -> Self {
-        Self { toggle: false }
+        Self { toggle: false, ch_enable: (true, true, true, true) }
     }
-    pub fn show(&self, ui: &mut Ui, pos: [f32; 2], audio: (&[f32], &[f32], &[f32], &[f32])) {
+    pub fn show(&mut self, gb: &mut GameBoy, ui: &mut Ui, pos: [f32; 2], audio: (&[f32], &[f32], &[f32], &[f32])) {
         if !self.toggle {
             return;
         }
@@ -258,32 +258,53 @@ impl WaveformWindow {
             .size([400.0, 380.0], Condition::FirstUseEver)
             .build(|| {
                 let sz = ui.content_region_avail();
-                let wav_sz = [sz[0], sz[1] / 4.0 - ui.clone_style().frame_padding[1]];
-                imgui::PlotLines::new(ui, "Square 1", audio.0)
+                ui.columns(2, "audio_col", true);
+                ui.set_column_width(0, sz[0] / 4.0 * 3.0);
+                ui.set_column_width(1, sz[0] / 4.0);
+                let wav_sz = [300.0, sz[1] / 4.0 - ui.clone_style().frame_padding[1] * 2.0 - 20.0];
+                ui.plot_lines("Square 1", audio.0)
                     .graph_size(wav_sz)
                     .scale_min(0.0)
                     .scale_max(1.0)
                     .overlay_text("Square 1")
                     .build();
-                imgui::PlotLines::new(ui, "Square 2", audio.1)
+                ui.next_column();
+                if ui.checkbox("Enable Square 1", &mut self.ch_enable.0) {
+                    gb.enable_audio_channel(0, self.ch_enable.0);
+                }
+                ui.next_column();
+                ui.plot_lines("Square 2", audio.1)
                     .graph_size(wav_sz)
                     .scale_min(0.0)
                     .scale_max(1.0)
                     .overlay_text("Square 2")
                     .build();
-                imgui::PlotLines::new(ui, "Wave", audio.2)
+                ui.next_column();
+                if ui.checkbox("Enable Square 2", &mut self.ch_enable.1) {
+                    gb.enable_audio_channel(1, self.ch_enable.1);
+                }
+                ui.next_column();
+                ui.plot_lines("Wave", audio.2)
                     .graph_size(wav_sz)
                     .scale_min(0.0)
                     .scale_max(1.0)
                     .overlay_text("Wave")
                     .build();
-                imgui::PlotLines::new(ui, "Noise", audio.3)
+                ui.next_column();
+                if ui.checkbox("Enable Wave", &mut self.ch_enable.2) {
+                    gb.enable_audio_channel(2, self.ch_enable.2);
+                }
+                ui.next_column();
+                ui.plot_lines("Noise", audio.3)
                     .graph_size(wav_sz)
                     .scale_min(0.0)
                     .scale_max(1.0)
                     .overlay_text("Noise")
                     .build();
-
+                ui.next_column();
+                if ui.checkbox("Enable Noise", &mut self.ch_enable.3) {
+                    gb.enable_audio_channel(3, self.ch_enable.3);
+                }
             });
     }
 

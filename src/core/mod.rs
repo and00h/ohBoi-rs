@@ -33,7 +33,8 @@ pub struct GameBoy {
     dma: Rc<RefCell<DmaController>>,
     timer: Rc<RefCell<Timer>>,
     cartridge: Rc<RefCell<Cartridge>>,
-    cycle_counter: u64
+    cycle_counter: u64,
+    enable_audio_channels: (bool, bool, bool, bool)
 }
 
 impl GameBoy {
@@ -58,7 +59,7 @@ impl GameBoy {
             b.set_cpu(Rc::clone(&cpu));
             b.set_dma_controller(Rc::clone(&dma));
         }
-        Ok(Self { joypad, bus, cpu, ppu, apu, dma, timer, cartridge: Rc::clone(&cartridge), cycle_counter: 0 })
+        Ok(Self { joypad, bus, cpu, ppu, apu, dma, timer, cartridge: Rc::clone(&cartridge), cycle_counter: 0, enable_audio_channels: (true, true, true, true) })
     }
 
     pub fn clock(&mut self) {
@@ -119,5 +120,15 @@ impl GameBoy {
     
     pub fn close_game(&self) {
         (*self.cartridge).borrow().save();
+    }
+
+    pub fn enable_audio_channel(&mut self, channel: u8, enable: bool) {
+        match channel {
+            0 => (*self.apu).borrow_mut().square1_enable = enable,
+            1 => (*self.apu).borrow_mut().square2_enable = enable,
+            2 => (*self.apu).borrow_mut().wave_enable = enable,
+            3 => (*self.apu).borrow_mut().noise_enable = enable,
+            _ => {}
+        }
     }
 }
