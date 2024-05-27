@@ -169,6 +169,11 @@ impl Cartridge {
     pub fn rom(&self) -> &[u8] {
         &self.mbc.rom()
     }
+    
+    #[cfg(feature = "debug_ui")]
+    pub fn ext_ram(&self) -> Option<&[u8]> {
+        self.mbc.ram().map(|ram| &ram[..])
+    }
 }
 
 impl<Idx> Index<Idx> for Cartridge

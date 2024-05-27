@@ -1,6 +1,8 @@
+use std::sync::{Arc, Mutex};
 use fern::colors::{Color, ColoredLevelConfig};
+use regex::{Regex, RegexBuilder};
 
-pub fn setup_logger(verbosity: u64, cpu_verbosity: u64) -> Result<(), fern::InitError> {
+pub fn setup_logger(verbosity: u64, cpu_verbosity: u64, log_buffer: Arc<Mutex<Vec<String>>>) -> Result<(), fern::InitError> {
     let mut config = fern::Dispatch::new();
     config = match verbosity {
         0 => config.level(log::LevelFilter::Off),
@@ -23,18 +25,22 @@ pub fn setup_logger(verbosity: u64, cpu_verbosity: u64) -> Result<(), fern::Init
         .info(Color::Cyan)
         .debug(Color::Green)
         .trace(Color::Magenta);
-
     config
         .format(move |out, message, record| {
             out.finish(format_args!(
-                "{color_line}[{target}:{level}] {message}\x1B[0m",
-                color_line = format_args!("\x1B[{}m", colors_line.get_color(&record.level()).to_fg_str()),
+                "[{level}] [{target}] {message}",
                 target = record.target(),
-                level = record.level(),
+                level = colors_line.color(record.level()),
                 message = message
             ));
         })
         .chain(std::io::stdout())
+        .chain(fern::Output::call(move |record| {
+            let ansi_regex = RegexBuilder::new("\x1B\\[[0-?]*[ -/]*[@-~]").build().expect("Failed to build regex");
+            let s = record.args().to_string();
+            let stripped = ansi_regex.replace_all(&s, "").into_owned();
+            log_buffer.lock().unwrap().push(stripped);
+        }))
         .apply()?;
     Ok(())
 }

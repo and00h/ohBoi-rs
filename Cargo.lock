@@ -413,6 +413,7 @@ dependencies = [
  "log",
  "once_cell",
  "openal",
+ "regex",
  "sdl2",
  "serde",
  "serde_json",

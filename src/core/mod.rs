@@ -136,4 +136,9 @@ impl GameBoy {
     pub fn rom(&self) -> &[u8] {
         unsafe { (*self.cartridge.as_ptr()).rom() }
     }
+    
+    #[cfg(feature = "debug_ui")]
+    pub fn ext_ram(&self) -> Option<&[u8]> {
+        unsafe { (*self.cartridge.as_ptr()).ext_ram() }
+    }
 }

@@ -2,7 +2,9 @@ mod widgets;
 
 use std::error::Error;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use cfg_if::cfg_if;
+use fern::Output;
 
 use imgui_glow_renderer::glow::{NativeTexture, PixelUnpackData};
 use imgui::{Condition, StyleVar, TextureId, Textures, Ui};
@@ -103,12 +105,16 @@ pub struct OhBoiUi {
     waveform_window: WaveformWindow,
     #[cfg(feature = "debug_ui")]
     rom_window: HexView,
+    #[cfg(feature = "debug_ui")]
+    ext_ram_window: HexView,
     textures: Textures<Texture>,
     audio_device: sdl2::audio::AudioQueue<f32>,
+    #[cfg(feature = "debug_ui")]
+    log_buffer: Arc<Mutex<Vec<String>>>
 }
 
 impl OhBoiUi {
-    pub fn new()
+    pub fn new(log_buffer: Option<Arc<Mutex<Vec<String>>>>)
         -> Result<Self, Box<dyn Error>> {
         let mut imgui = imgui::Context::create();
         imgui.set_ini_filename(None);
@@ -155,8 +161,10 @@ impl OhBoiUi {
         cfg_if!{
             if #[cfg(feature = "debug_ui")] {
                 let waveform_window = WaveformWindow::new();
-                let rom_window = HexView::new();
-                Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, waveform_window, rom_window, textures, audio_device })
+                let rom_window = HexView::new("ROM".to_string());
+                let ext_ram_window = HexView::new("External RAM".to_string());
+                let log_buffer = log_buffer.unwrap_or(Arc::new(Mutex::new(Vec::new())));
+                Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, waveform_window, rom_window, ext_ram_window, textures, audio_device, log_buffer })
             } else {
                 Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, textures, audio_device })
             }
@@ -218,17 +226,26 @@ impl OhBoiUi {
         let ui = self.imgui.new_frame();
 
         let menu_event = Self::main_menu_bar(ui);
-        self.game_window.show(ui, self.sdl_window.size(), text);
+        let window_size = self.sdl_window.size();
+        self.game_window.show(ui, window_size, text);
 
         cfg_if!{ if #[cfg(feature = "debug_ui")] {
-            let rom_pos = [ui.window_pos()[0], 10.0];
-            self.rom_window.show(ui, &gb.rom(), rom_pos);
-            let waveform_pos = [2.0, 2.0];
+            let hex_view_width = widgets::calc_hex_view_width(ui, 16);
+            let rom_pos = [330.0, 20.0];
+            self.rom_window.show(ui, &gb.rom(), rom_pos, Some(0x4000));
+            let ext_ram_pos = [330.0, 20.0 + 300.0 + 20.0];
+            match gb.ext_ram() {
+                Some(ram) => self.ext_ram_window.show(ui, ram, ext_ram_pos, Some(0x2000)),
+                None => {}
+            }
+            let waveform_pos = [ui.item_rect_size()[0] + ui.cursor_pos()[0], 20.0];
             self.waveform_window.show(gb, ui, waveform_pos, sample);
             match menu_event.clone() {
                 ToggleWaveform => self.waveform_window.toggle(),
                 _ => {}
             }
+            
+            widgets::log_window(ui, "Log", Arc::clone(&self.log_buffer));
         }}
 
         let draw_data = self.imgui.render();
@@ -279,50 +296,48 @@ impl WaveformWindow {
             .size([400.0, 380.0], Condition::FirstUseEver)
             .build(|| {
                 let sz = ui.content_region_avail();
-                ui.columns(2, "audio_col", true);
-                ui.set_column_width(0, sz[0] / 4.0 * 3.0);
-                ui.set_column_width(1, sz[0] / 4.0);
-                let wav_sz = [300.0, sz[1] / 4.0 - ui.clone_style().frame_padding[1] * 2.0 - 20.0];
-                ui.plot_lines("Square 1", audio.0)
+                let wav_sz = [sz[0] - ui.calc_text_size("Enable Square 1")[0] - 40.0, sz[1] / 4.0 - ui.clone_style().frame_padding[1] * 2.0];
+                //let wav_sz = [sz[0] / 4.0 * 3.0, sz[1] / 4.0 - ui.clone_style().frame_padding[1] * 2.0];
+                ui.plot_lines("", audio.0)
                     .graph_size(wav_sz)
                     .scale_min(0.0)
                     .scale_max(1.0)
                     .overlay_text("Square 1")
                     .build();
-                ui.next_column();
+                ui.same_line();
                 if ui.checkbox("Enable Square 1", &mut self.ch_enable.0) {
                     gb.enable_audio_channel(0, self.ch_enable.0);
                 }
-                ui.next_column();
-                ui.plot_lines("Square 2", audio.1)
+                ui.separator();
+                ui.plot_lines("", audio.1)
                     .graph_size(wav_sz)
                     .scale_min(0.0)
                     .scale_max(1.0)
                     .overlay_text("Square 2")
                     .build();
-                ui.next_column();
+                ui.same_line();
                 if ui.checkbox("Enable Square 2", &mut self.ch_enable.1) {
                     gb.enable_audio_channel(1, self.ch_enable.1);
                 }
-                ui.next_column();
-                ui.plot_lines("Wave", audio.2)
+                ui.separator();
+                ui.plot_lines("", audio.2)
                     .graph_size(wav_sz)
                     .scale_min(0.0)
                     .scale_max(1.0)
                     .overlay_text("Wave")
                     .build();
-                ui.next_column();
+                ui.same_line();
                 if ui.checkbox("Enable Wave", &mut self.ch_enable.2) {
                     gb.enable_audio_channel(2, self.ch_enable.2);
                 }
-                ui.next_column();
-                ui.plot_lines("Noise", audio.3)
+                ui.separator();
+                ui.plot_lines("", audio.3)
                     .graph_size(wav_sz)
                     .scale_min(0.0)
                     .scale_max(1.0)
                     .overlay_text("Noise")
                     .build();
-                ui.next_column();
+                ui.same_line();
                 if ui.checkbox("Enable Noise", &mut self.ch_enable.3) {
                     gb.enable_audio_channel(3, self.ch_enable.3);
                 }
@@ -349,7 +364,7 @@ impl GameWindow {
 
         let mut w = ui.window("ohBoi")
             .position(screen_pos, Condition::FirstUseEver)
-            .size(screen_size, Condition::Always);
+            .size(screen_size, Condition::FirstUseEver);
         if cfg!(feature = "debug_ui") {
             w = w.movable(true).resizable(true);
         } else {

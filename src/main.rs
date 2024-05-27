@@ -7,6 +7,7 @@ use std::error::Error;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use log::{info};
 use crate::core::GameBoy;
@@ -15,10 +16,12 @@ use crate::ui::{OhBoiUi};
 use crate::ui::GameWindowEvent::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    logging::setup_logger(2, 0)?;
+    let log_buffer = Arc::new(Mutex::new(Vec::new()));
+    setup_logger(2, 0, Arc::clone(&log_buffer))?;
+    
     info!("Starting ohBoi");
     let mut gb = GameBoy::new(PathBuf::from("./tetris.gb"))?;
-    let mut ui = OhBoiUi::new()?;
+    let mut ui = OhBoiUi::new(Some(log_buffer))?;
     let mut audio_queue = vec![0.0; 4096];
     let mut ch1_queue = vec![0.0; 2048];
     let mut ch2_queue = vec![0.0; 2048];
