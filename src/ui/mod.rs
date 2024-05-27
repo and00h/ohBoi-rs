@@ -1,6 +1,8 @@
+mod widgets;
+
 use std::error::Error;
 use std::path::PathBuf;
-use std::sync::atomic::compiler_fence;
+use cfg_if::cfg_if;
 
 use imgui_glow_renderer::glow::{NativeTexture, PixelUnpackData};
 use imgui::{Condition, StyleVar, TextureId, Textures, Ui};
@@ -15,6 +17,9 @@ use crate::core::GameBoy;
 use crate::core::joypad::Key;
 use crate::ui::GameWindowEvent::{Close, Nothing, Open, ToggleWaveform};
 
+#[cfg(feature = "debug_ui")]
+use crate::ui::widgets::HexView;
+
 const GB_SCREEN_WIDTH: usize = 160;
 const GB_SCREEN_HEIGHT: usize = 144;
 
@@ -22,9 +27,9 @@ const GB_SCREEN_HEIGHT: usize = 144;
 pub enum GameWindowEvent {
     Close,
     Open(PathBuf),
-    ToggleWaveform,
     //KeyPress(Keycode),
-    Nothing
+    Nothing,
+    ToggleWaveform
 }
 
 fn new_texture(w: usize, h: usize, gl: &Context, textures: &mut Textures<NativeTexture>) -> Result<TextureId, Box<dyn Error>> {
@@ -94,7 +99,10 @@ pub struct OhBoiUi {
     sdl_window: Window,
     renderer: Renderer,
     game_window: GameWindow,
+    #[cfg(feature = "debug_ui")]
     waveform_window: WaveformWindow,
+    #[cfg(feature = "debug_ui")]
+    rom_window: HexView,
     textures: Textures<Texture>,
     audio_device: sdl2::audio::AudioQueue<f32>,
 }
@@ -135,7 +143,6 @@ impl OhBoiUi {
         let gb_screen_texture = new_texture(GB_SCREEN_WIDTH, GB_SCREEN_HEIGHT, &gl, &mut textures)?;
         let renderer = Renderer::initialize(&gl, &mut imgui, &mut textures, false)?;
         let game_window = GameWindow::new(gb_screen_texture);
-        let waveform_window = WaveformWindow::new();
 
         let audio_context = sdl.audio().unwrap();
         let spec = sdl2::audio::AudioSpecDesired {
@@ -145,7 +152,15 @@ impl OhBoiUi {
         };
         let audio_device = audio_context.open_queue::<f32, _>(None, &spec).unwrap();
         audio_device.resume();
-        Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, waveform_window, textures, audio_device })
+        cfg_if!{
+            if #[cfg(feature = "debug_ui")] {
+                let waveform_window = WaveformWindow::new();
+                let rom_window = HexView::new();
+                Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, waveform_window, rom_window, textures, audio_device })
+            } else {
+                Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, textures, audio_device })
+            }
+        }
     }
 
     #[inline]
@@ -204,13 +219,17 @@ impl OhBoiUi {
 
         let menu_event = Self::main_menu_bar(ui);
         self.game_window.show(ui, self.sdl_window.size(), text);
-        let waveform_pos = [(GB_SCREEN_WIDTH * 2) as f32, 20.0];
-        self.waveform_window.show(gb, ui, waveform_pos, sample);
 
-        match menu_event.clone() {
-            ToggleWaveform => self.waveform_window.toggle(),
-            _ => {}
-        }
+        cfg_if!{ if #[cfg(feature = "debug_ui")] {
+            let rom_pos = [ui.window_pos()[0], 10.0];
+            self.rom_window.show(ui, &gb.rom(), rom_pos);
+            let waveform_pos = [2.0, 2.0];
+            self.waveform_window.show(gb, ui, waveform_pos, sample);
+            match menu_event.clone() {
+                ToggleWaveform => self.waveform_window.toggle(),
+                _ => {}
+            }
+        }}
 
         let draw_data = self.imgui.render();
         unsafe { self.gl.clear(glow::COLOR_BUFFER_BIT) };
@@ -240,11 +259,13 @@ impl OhBoiUi {
     }
 }
 
+#[cfg(feature = "debug_ui")]
 pub struct WaveformWindow {
     toggle: bool,
     ch_enable: (bool, bool, bool, bool)
 }
 
+#[cfg(feature = "debug_ui")]
 impl WaveformWindow {
     pub fn new() -> Self {
         Self { toggle: false, ch_enable: (true, true, true, true) }
@@ -326,11 +347,16 @@ impl GameWindow {
         let _a = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
         let _b = ui.push_style_var(StyleVar::ChildBorderSize(0.0));
 
-        ui.window("ohBoi")
+        let mut w = ui.window("ohBoi")
             .position(screen_pos, Condition::FirstUseEver)
-            .size(screen_size, Condition::FirstUseEver)
-            .movable(true)
-            .draw_background(false)
+            .size(screen_size, Condition::Always);
+        if cfg!(feature = "debug_ui") {
+            w = w.movable(true).resizable(true);
+        } else {
+            w = w.no_decoration();
+        }
+
+        w.draw_background(false)
             .build(|| {
                 if let Some(t) = text {
                     ui.text(t);
@@ -342,7 +368,12 @@ impl GameWindow {
 
     pub fn show(&self, ui: &mut Ui, sdl_window_size: (u32, u32), text: Option<String>) {
         let [_, imgui_menu_height] = ui.item_rect_size();
-        let game_screen_size = [(GB_SCREEN_WIDTH * 2) as f32, (GB_SCREEN_HEIGHT * 2) as f32];
+        let game_screen_size = if cfg!(feature = "debug_ui") {
+            [(GB_SCREEN_WIDTH * 2) as f32, (GB_SCREEN_HEIGHT * 2) as f32]
+        } else {
+            [sdl_window_size.0 as f32, sdl_window_size.1 as f32 - imgui_menu_height]
+        };
+
         self.game_screen(ui, [0.0, imgui_menu_height], game_screen_size, text);
     }
 

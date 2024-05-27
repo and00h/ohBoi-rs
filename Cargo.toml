@@ -21,6 +21,10 @@ imgui-sdl2-support = "0.11.0"
 imgui-glow-renderer = "0.11.0"
 tinyfiledialogs = "3.9.1"
 openal = "0.2.2"
+cfg-if = "1.0.0"
+
+[features]
+debug_ui = []
 
 [target.'cfg(windows)'.dependencies]
 sdl2 = { version = "0.34.5", features = ["bundled"] }

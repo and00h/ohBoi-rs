@@ -27,7 +27,7 @@ fn calc_rom_size(header_rom_size: usize) -> usize {
     }
 }
 
-pub(super) trait Mbc {
+pub(crate) trait Mbc {
     fn read(&self, addr: u16) -> u8;
     fn write(&mut self, addr: u16, val: u8);
     fn read_ext_ram(&self, _addr: u16) -> u8 { 0xFF }

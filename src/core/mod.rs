@@ -131,4 +131,9 @@ impl GameBoy {
             _ => {}
         }
     }
+
+    #[cfg(feature = "debug_ui")]
+    pub fn rom(&self) -> &[u8] {
+        unsafe { (*self.cartridge.as_ptr()).rom() }
+    }
 }

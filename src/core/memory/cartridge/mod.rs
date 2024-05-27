@@ -1,8 +1,12 @@
 mod mbc;
 
+use std::cell::RefCell;
 use std::fs::File;
 use std::path::PathBuf;
 use std::io::{Read, Result, Write};
+use std::ops::{Index, IndexMut};
+use std::rc::Rc;
+use std::slice::SliceIndex;
 use log::warn;
 use crate::core::memory::cartridge::mbc::{make_mbc, Mbc};
 
@@ -104,7 +108,7 @@ pub struct Cartridge {
     rom_path: PathBuf,
     sav_path: PathBuf,
     header: CartridgeHeader,
-    mbc: Box<dyn Mbc>
+    pub(crate) mbc: Box<dyn Mbc>
 }
 
 impl Cartridge {
@@ -159,5 +163,19 @@ impl Cartridge {
 
     pub fn is_cgb(&self) -> bool {
         self.header.cgb
+    }
+
+    #[cfg(feature = "debug_ui")]
+    pub fn rom(&self) -> &[u8] {
+        &self.mbc.rom()
+    }
+}
+
+impl<Idx> Index<Idx> for Cartridge
+where Idx: SliceIndex<[u8]> {
+    type Output = Idx::Output;
+
+    fn index(&self, index: Idx) -> &Self::Output {
+        &self.mbc.rom()[index]
     }
 }
