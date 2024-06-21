@@ -1,8 +1,13 @@
 use std::sync::{Arc, Mutex};
-use fern::colors::{Color, ColoredLevelConfig};
+use fern::colors::{Color, ColoredLevelConfig, WithFgColor};
 use regex::{Regex, RegexBuilder};
 
-pub fn setup_logger(verbosity: u64, cpu_verbosity: u64, log_buffer: Arc<Mutex<Vec<String>>>) -> Result<(), fern::InitError> {
+pub struct ImguiLogString {
+    pub text: String,
+    pub level: log::Level
+}
+
+pub fn setup_logger(verbosity: u64, cpu_verbosity: u64, log_buffer: Arc<Mutex<Vec<ImguiLogString>>>) -> Result<(), fern::InitError> {
     let mut config = fern::Dispatch::new();
     config = match verbosity {
         0 => config.level(log::LevelFilter::Off),
@@ -27,19 +32,25 @@ pub fn setup_logger(verbosity: u64, cpu_verbosity: u64, log_buffer: Arc<Mutex<Ve
         .trace(Color::Magenta);
     config
         .format(move |out, message, record| {
-            out.finish(format_args!(
-                "[{level}] [{target}] {message}",
-                target = record.target(),
-                level = colors_line.color(record.level()),
-                message = message
-            ));
+            if cfg!(unix) && !cfg!(feature = "debug_ui") {
+                out.finish(format_args!(
+                    "[{level}] [{target}] {message}",
+                    target = record.target(),
+                    level = colors_line.color(record.level()),
+                    message = message
+                ));
+            } else { 
+                out.finish(format_args!(
+                    "[{level}] [{target}] {message}",
+                    target = record.target(),
+                    level = record.level(),
+                    message = message
+                ));
+            };
         })
         .chain(std::io::stdout())
         .chain(fern::Output::call(move |record| {
-            let ansi_regex = RegexBuilder::new("\x1B\\[[0-?]*[ -/]*[@-~]").build().expect("Failed to build regex");
-            let s = record.args().to_string();
-            let stripped = ansi_regex.replace_all(&s, "").into_owned();
-            log_buffer.lock().unwrap().push(stripped);
+            log_buffer.lock().unwrap().push(ImguiLogString { text: record.args().to_string(), level: record.level() });
         }))
         .apply()?;
     Ok(())

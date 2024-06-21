@@ -3,6 +3,7 @@
 use std::cmp::{max, max_by, min};
 use std::sync::{Arc, Mutex};
 use imgui::{Condition, StyleColor, StyleVar, Ui, WindowFlags};
+use crate::logging::ImguiLogString;
 
 pub fn hex_view(ui: &Ui, bytes_per_row: usize, data: &[u8], split_threshold: Option<usize>, selected: &mut usize) {
     let spacing = ui.clone_style().item_spacing;
@@ -45,7 +46,7 @@ pub fn hex_view(ui: &Ui, bytes_per_row: usize, data: &[u8], split_threshold: Opt
     }
 }
 
-pub fn log_window(ui: &Ui, title: &str, log: Arc<Mutex<Vec<String>>>) {
+pub fn log_window(ui: &Ui, title: &str, log: Arc<Mutex<Vec<ImguiLogString>>>) {
     ui.window(title)
         .size([400.0, 300.0], Condition::FirstUseEver)
         .build(|| {
@@ -57,20 +58,14 @@ pub fn log_window(ui: &Ui, title: &str, log: Arc<Mutex<Vec<String>>>) {
                 .always_vertical_scrollbar(true)
                 .build(|| {
                     for line in log.lock().unwrap().iter() {
-                        let _style = if line.contains("ERROR") {
-                            ui.push_style_color(StyleColor::Text, [1.0, 0.0, 0.0, 1.0])
-                        } else if line.contains("WARN") {
-                            ui.push_style_color(StyleColor::Text, [1.0, 1.0, 0.0, 1.0])
-                        } else if line.contains("INFO") {
-                            ui.push_style_color(StyleColor::Text, [0.0, 1.0, 1.0, 1.0])
-                        } else if line.contains("DEBUG") {
-                            ui.push_style_color(StyleColor::Text, [0.0, 1.0, 0.0, 1.0])
-                        } else if line.contains("TRACE") {
-                            ui.push_style_color(StyleColor::Text, [1.0, 0.0, 1.0, 1.0])
-                        } else {
-                            ui.push_style_color(StyleColor::Text, [1.0, 1.0, 1.0, 1.0])
+                        let _text_color = match line.level {
+                            log::Level::Error => ui.push_style_color(StyleColor::Text, [1.0, 0.0, 0.0, 1.0]),
+                            log::Level::Warn => ui.push_style_color(StyleColor::Text, [1.0, 1.0, 0.0, 1.0]),
+                            log::Level::Info => ui.push_style_color(StyleColor::Text, [0.0, 1.0, 1.0, 1.0]),
+                            log::Level::Debug => ui.push_style_color(StyleColor::Text, [0.0, 1.0, 0.0, 1.0]),
+                            log::Level::Trace => ui.push_style_color(StyleColor::Text, [1.0, 0.0, 1.0, 1.0]),
                         };
-                        ui.text(line);
+                        ui.text(line.text.as_str());
                         ui.set_scroll_y(ui.scroll_max_y());
                     }
                 });

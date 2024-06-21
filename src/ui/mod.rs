@@ -17,6 +17,7 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use crate::core::GameBoy;
 use crate::core::joypad::Key;
+use crate::logging::ImguiLogString;
 use crate::ui::GameWindowEvent::{Close, Nothing, Open, ToggleWaveform};
 
 #[cfg(feature = "debug_ui")]
@@ -110,11 +111,11 @@ pub struct OhBoiUi {
     textures: Textures<Texture>,
     audio_device: sdl2::audio::AudioQueue<f32>,
     #[cfg(feature = "debug_ui")]
-    log_buffer: Arc<Mutex<Vec<String>>>
+    log_buffer: Arc<Mutex<Vec<ImguiLogString>>>
 }
 
 impl OhBoiUi {
-    pub fn new(log_buffer: Option<Arc<Mutex<Vec<String>>>>)
+    pub fn new(log_buffer: Option<Arc<Mutex<Vec<ImguiLogString>>>>)
         -> Result<Self, Box<dyn Error>> {
         let mut imgui = imgui::Context::create();
         imgui.set_ini_filename(None);
