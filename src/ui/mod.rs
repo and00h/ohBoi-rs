@@ -367,9 +367,9 @@ impl GameWindow {
             .position(screen_pos, Condition::FirstUseEver)
             .size(screen_size, Condition::FirstUseEver);
         if cfg!(feature = "debug_ui") {
-            w = w.movable(true).resizable(true);
+            w = w.movable(true).resizable(true).size(screen_size, Condition::FirstUseEver);
         } else {
-            w = w.no_decoration();
+            w = w.size(screen_size, Condition::Always).no_decoration();
         }
 
         w.draw_background(false)

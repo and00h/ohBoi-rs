@@ -4,7 +4,7 @@ use std::rc::{Rc, Weak};
 use log::{trace, warn};
 use crate::core::audio::Apu;
 use crate::core::cpu::Cpu;
-use crate::core::gpu::Ppu;
+use crate::core::ppu::Ppu;
 use crate::core::interrupts::{Interrupt, InterruptController};
 use crate::core::joypad::Joypad;
 use crate::core::memory::cartridge::Cartridge;

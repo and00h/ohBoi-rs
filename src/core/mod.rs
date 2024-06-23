@@ -5,7 +5,7 @@ use std::rc::Rc;
 use crate::core::audio::{Apu};
 use crate::core::bus::Bus;
 use crate::core::cpu::Cpu;
-use crate::core::gpu::{Ppu, PpuState};
+use crate::core::ppu::{Ppu, PpuState};
 use crate::core::interrupts::InterruptController;
 use crate::core::joypad::{Joypad, Key};
 use crate::core::memory::cartridge::Cartridge;
@@ -20,9 +20,9 @@ mod timers;
 mod bus;
 pub mod cpu;
 mod memory;
-mod gpu;
 mod audio;
 mod utils;
+mod ppu;
 
 pub struct GameBoy {
     joypad: Rc<RefCell<Joypad>>,
