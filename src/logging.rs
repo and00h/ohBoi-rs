@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use fern::colors::{Color, ColoredLevelConfig, WithFgColor};
 use regex::{Regex, RegexBuilder};
@@ -7,7 +8,7 @@ pub struct ImguiLogString {
     pub level: log::Level
 }
 
-pub fn setup_logger(verbosity: u64, cpu_verbosity: u64, log_buffer: Arc<Mutex<Vec<ImguiLogString>>>) -> Result<(), fern::InitError> {
+pub fn setup_logger(verbosity: u64, cpu_verbosity: u64, log_buffer: Arc<Mutex<VecDeque<ImguiLogString>>>) -> Result<(), fern::InitError> {
     let mut config = fern::Dispatch::new();
     config = match verbosity {
         0 => config.level(log::LevelFilter::Off),
@@ -50,7 +51,11 @@ pub fn setup_logger(verbosity: u64, cpu_verbosity: u64, log_buffer: Arc<Mutex<Ve
         })
         .chain(std::io::stdout())
         .chain(fern::Output::call(move |record| {
-            log_buffer.lock().unwrap().push(ImguiLogString { text: record.args().to_string(), level: record.level() });
+            let mut buf = log_buffer.lock().unwrap();
+            if buf.len() > 1000 {
+                buf.pop_front();
+            }
+            buf.push_back(ImguiLogString { text: record.args().to_string(), level: record.level() });
         }))
         .apply()?;
     Ok(())

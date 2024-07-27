@@ -37,7 +37,7 @@ impl Mbc5 {
 
 impl Mbc for Mbc5 {
     fn read(&self, addr: u16) -> u8 {
-        let mut bank_number = if addr < 0x4000 { 0 } else { ((self.rom_bank_hi << 8) | self.rom_bank_lo) & 0x1FF };
+        let mut bank_number = if addr < 0x4000 { 0 } else { (self.rom_bank_hi << 8) | self.rom_bank_lo };
 
         bank_number %= self.n_rom_banks;
         let bank_offset = (addr as usize) % ROM_BANK_SIZE;

@@ -5,7 +5,7 @@ use std::cell::{Ref, RefCell};
 use std::collections::vec_deque::VecDeque;
 use std::fmt::{Debug, Formatter};
 use std::rc::{Rc, Weak};
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use crate::core::bus::{Bus, BusController};
 use crate::core::interrupts::{Interrupt, InterruptController};
 
@@ -41,6 +41,13 @@ pub(crate) enum CpuFlag {
     Carry       = 0b00010000
 }
 
+#[derive(Debug, Copy, Clone)]
+pub enum Speed {
+    Normal,
+    Double,
+    Switching(bool)
+}
+
 pub(crate) struct Registers {
     regs: Vec<u8>,
     cgb: bool
@@ -48,16 +55,19 @@ pub(crate) struct Registers {
 
 use Register8::*;
 use Register16::*;
+use crate::core::cpu::CpuState::HdmaHalted;
 use crate::core::cpu::instructions::{InstArg, INSTRUCTIONS, InstructionType, MNEMONICS, NARGS};
 use crate::core::cpu::prefixed_insts::PREFIXED_INSTS;
+use crate::core::cpu::Speed::Switching;
 
 impl Registers {
     pub fn new(cgb: bool) -> Self {
         Registers {
-            regs: vec![
-                0x00, 0x13, 0x00, 0xD8, 0x01, 0x4D, 0xB0,
-                if cgb { 0x11 } else { 0x01 }
-            ],
+            regs: if cgb {
+                vec![0x00, 0x00, 0xFF, 0x56, 0x00, 0x0D, 0xB0, 0x11]
+            } else {
+                vec![0x00, 0x13, 0x00, 0xD8, 0x01, 0x4D, 0xB0, 0x01]
+            },
             cgb
         }
     }
@@ -158,6 +168,7 @@ pub(crate) enum CpuState {
     Decoding(u8),
     Halting,
     Halted,
+    HdmaHalted,
     StartedExecution,
     ReadArg,
     ReadArgLo,
@@ -180,6 +191,7 @@ pub(crate) enum CpuState {
     PushLo,
     PopHi,
     PopLo,
+    Stopped(usize),
     FinishedExecution,
     EnablingInterrupts,
     ServicingInterrupts,
@@ -211,7 +223,7 @@ pub(crate) struct Cpu {
     instruction_arg: InstArg,
 
     interrupts_to_handle: VecDeque<u16>,
-    double_speed: bool,
+    speed: Speed,
 
     cycles: u64,
     elapsed: u64,
@@ -231,7 +243,7 @@ impl Cpu {
             instruction: INSTRUCTIONS[0],
             instruction_arg: InstArg::None,
             interrupts_to_handle: VecDeque::new(),
-            double_speed: false,
+            speed: Speed::Normal,
             cycles: 0,
             elapsed: 0,
             cgb
@@ -244,10 +256,14 @@ impl Cpu {
         self.pc = 0x0100;
         self.state = CpuState::Fetching { halt_bug: false };
 
-        self.double_speed = false;
+        self.speed = Speed::Normal;
         self.cycles = 0;
 
         (*self.interrupt_controller).borrow_mut().reset();
+    }
+    
+    pub fn speed(&self) -> Speed {
+        self.speed
     }
 
     fn fetch(&mut self, halt_bug: bool) {
@@ -296,6 +312,10 @@ impl Cpu {
         } else {
             CpuState::Fetching { halt_bug: false }
         }
+    }
+    
+    pub fn arm_speed_switch(&mut self) {
+        self.speed = Switching(matches!(self.speed, Speed::Normal));
     }
 
     fn interrupt_service_routine(&mut self) {
@@ -356,12 +376,23 @@ impl Cpu {
             | InterruptWaitState1 | InterruptWaitState2
             | InterruptPushPCHi | InterruptPushPCLo
             | InterruptUpdatePC => self.interrupt_service_routine(),
+            HdmaHalted => {},
             _ => (self.instruction)(self)
         }
-        debug_assert!(old_state != self.state || self.state == Halted);
+        debug_assert!(old_state != self.state || matches!(self.state, Stopped(_) | Halted | HdmaHalted));
         // trace!("{:?} => {:?}", old_state, self.state);
     }
-
+    
+    pub fn hdma_halt(&mut self) {
+        self.state = HdmaHalted;
+    }
+    
+    pub fn hdma_continue(&mut self) {
+        if !matches!(self.state, HdmaHalted) {
+            panic!("What the fuck");
+        }
+        self.state = CpuState::ServicingInterrupts;
+    }
     pub fn state(&self) -> &CpuState {
         &self.state
     }
@@ -1404,7 +1435,24 @@ impl Cpu {
     }
 
     fn stop(&mut self) {
-
+        self.state =
+            match self.state {
+                CpuState::StartedExecution => {
+                    CpuState::Stopped(2051)
+                },
+                CpuState::Stopped(remaining) => {
+                    if remaining == 0 {
+                        if let Switching(double) = self.speed {
+                            self.speed = if double { Speed::Double } else { Speed::Normal }
+                        };
+                        error!("Ended speed switch");
+                        CpuState::FinishedExecution
+                    } else {
+                        CpuState::Stopped(remaining - 1)
+                    }
+                },
+                _ => unreachable!()
+            }
     }
 
     fn sub(&mut self, val: u8) {

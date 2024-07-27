@@ -44,7 +44,6 @@ pub struct Joypad {
 
 impl Joypad {
     pub fn new(interrupt_controller: Rc<RefCell<InterruptController>>) -> Self {
-        trace!("Building Joypad");
         Joypad {
             key_state_buttons: 0xF,
             key_state_dir: 0xF,
@@ -70,8 +69,6 @@ impl Joypad {
     }
 
     pub fn press(&mut self, key: Key) {
-        debug!("Key {:?} pressed", key);
-
         match key {
             Key::A | Key::B | Key::Select | Key::Start => {
                 self.key_state_buttons &= !KEY_MASK_MAP[key as usize];
@@ -86,7 +83,6 @@ impl Joypad {
     }
 
     pub fn release(&mut self, key: Key) {
-        debug!("Key {:?} released", key);
         match key {
             Key::A | Key::B | Key::Select | Key::Start => {
                 self.key_state_buttons |= KEY_MASK_MAP[key as usize];
@@ -105,12 +101,6 @@ impl Joypad {
 
     pub fn select_key_group(&mut self, val: u8) {
         let key_groups = val & key_masks::KEY_GROUPS;
-        trace!("Selecting key group(s) {}", match key_groups {
-            0 => "Directional|Button",
-            key_masks::DIRECTIONAL => "Button",
-            key_masks::BUTTON => "Directional",
-            _ => "[none]"
-        });
         self.key_select = (val & 0xF0) | 0xC0;
     }
 

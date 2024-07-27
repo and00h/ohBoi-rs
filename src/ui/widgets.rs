@@ -1,6 +1,7 @@
 #![cfg(feature = "debug_ui")]
 
 use std::cmp::{max, max_by, min};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use imgui::{Condition, StyleColor, StyleVar, Ui, WindowFlags};
 use crate::logging::ImguiLogString;
@@ -46,7 +47,7 @@ pub fn hex_view(ui: &Ui, bytes_per_row: usize, data: &[u8], split_threshold: Opt
     }
 }
 
-pub fn log_window(ui: &Ui, title: &str, log: Arc<Mutex<Vec<ImguiLogString>>>) {
+pub fn log_window(ui: &Ui, title: &str, log: Arc<Mutex<VecDeque<ImguiLogString>>>) {
     ui.window(title)
         .size([400.0, 300.0], Condition::FirstUseEver)
         .build(|| {

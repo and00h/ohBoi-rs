@@ -3,6 +3,7 @@ pub mod core;
 mod ohboi;
 mod ui;
 
+use std::collections::VecDeque;
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
@@ -16,8 +17,8 @@ use crate::ui::{OhBoiUi};
 use crate::ui::GameWindowEvent::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let log_buffer = Arc::new(Mutex::new(Vec::new()));
-    setup_logger(2, 0, Arc::clone(&log_buffer))?;
+    let log_buffer = Arc::new(Mutex::new(VecDeque::new()));
+    setup_logger(3, 0, Arc::clone(&log_buffer))?;
     
     info!("Starting ohBoi");
     let mut gb = GameBoy::new(PathBuf::from("./tetris.gb"))?;
@@ -64,7 +65,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         match ui.show(&mut gb, None, (&ch1_queue, &ch2_queue, &ch3_queue, &ch4_queue))? {
             Open(path) => {
                 gb.close_game();
-                gb.load_new_game(path)?;
+                gb = GameBoy::new(path)?;
             },
             Close => {
                 gb.close_game();

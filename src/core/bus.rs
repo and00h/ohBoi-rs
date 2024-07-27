@@ -1,15 +1,15 @@
 use std::cell::RefCell;
 use std::panic::Location;
 use std::rc::{Rc, Weak};
-use log::{trace, warn};
+use log::{debug, trace, warn};
 use crate::core::audio::Apu;
-use crate::core::cpu::Cpu;
+use crate::core::cpu::{Cpu, Speed};
 use crate::core::ppu::Ppu;
 use crate::core::interrupts::{Interrupt, InterruptController};
 use crate::core::joypad::Joypad;
 use crate::core::memory::cartridge::Cartridge;
 use crate::core::timers::Timer;
-use crate::core::memory::dma::{DmaController, DmaState};
+use crate::core::memory::dma::{DmaController, DmaState, HdmaController};
 use crate::core::memory::WRAM;
 
 pub(crate) struct BusController(Weak<RefCell<Bus>>);
@@ -46,6 +46,20 @@ impl BusController {
             (*b).borrow_mut().dma_write(addr, val);
         }
     }
+    
+    pub fn hdma_halt_cpu(&mut self) {
+        debug!("HDMA halt requested");
+        if let Some(b) = self.0.upgrade() {
+            (*b).borrow_mut().hdma_halt_cpu();
+        }
+    }
+    
+    pub fn hdma_restart_cpu(&mut self) {
+        debug!("HDMA restart requested");
+        if let Some(b) = self.0.upgrade() {
+            (*b).borrow_mut().hdma_continue();
+        }
+    }
 }
 
 pub(crate) struct Bus {
@@ -54,6 +68,7 @@ pub(crate) struct Bus {
     cpu: Option<Rc<RefCell<Cpu>>>,
     apu: Rc<RefCell<Apu>>,
     dma: Option<Rc<RefCell<DmaController>>>,
+    hdma: Option<Rc<RefCell<HdmaController>>>,
     cartridge: Rc<RefCell<Cartridge>>,
     interrupts: Rc<RefCell<InterruptController>>,
     ppu: Rc<RefCell<Ppu>>,
@@ -76,6 +91,7 @@ impl Bus {
             cpu: None,
             apu,
             dma: None,
+            hdma: None,
             cartridge,
             interrupts,
             wram: WRAM::new(),
@@ -100,11 +116,16 @@ impl Bus {
     pub fn set_dma_controller(&mut self, dma: Rc<RefCell<DmaController>>) {
         self.dma = Some(dma);
     }
-
+    
+    pub fn set_hdma_controller(&mut self, hdma: Rc<RefCell<HdmaController>>) {
+        self.hdma = Some(hdma);
+    }
+    
     fn write_io(&mut self, addr: u16, val: u8) {
         match addr {
             0xFF00 => (*self.joypad).borrow_mut().select_key_group(val),
-            0xFF01 if cfg!(debug_assertions) => print!("{}", val as char),
+            0xFF01 => print!("{}", val as char),
+            0xFF02 => print!("{}", val as char),
             0xFF04 => (*self.timer).borrow_mut().reset_counter(),
             0xFF05 => (*self.timer).borrow_mut().set_tima(val),
             0xFF06 => (*self.timer).borrow_mut().set_tma(val),
@@ -112,7 +133,26 @@ impl Bus {
             0xFF0F => (*self.interrupts).borrow_mut().set_interrupt_request(val),
             0xFF10..=0xFF3F => (*self.apu).borrow_mut().write(addr, val),
             0xFF46 => (*self.dma.as_ref().unwrap()).borrow_mut().trigger(val),
-            0xFF40..=0xFF4F => (*self.ppu).borrow_mut().write(addr, val, false),
+            0xFF51..=0xFF55 => {
+                if let Some(hdma) = self.hdma.as_ref() {
+                    hdma.borrow_mut().write(addr, val);
+                }
+                if addr == 0xFF55 {
+                    unsafe {
+                        (*self.cpu.as_ref().unwrap().as_ptr()).hdma_halt();
+                    }
+                }
+            },
+            0xFF4D => {
+                warn!("Speed switch requested");
+                unsafe {
+                    if let Some(cpu) = self.cpu.as_ref() {
+                        (*cpu.as_ptr()).arm_speed_switch();
+                    }
+                }
+            },
+            0xFF40..=0xFF4F | 0xFF68..=0xFF6B => (*self.ppu).borrow_mut().write(addr, val, false),
+            0xFF70 => self.wram.switch_bank(val as usize & 0b111),
             _ => {
                 warn!("Write of value 0x{:X} to I/O port 0x{:X} unhandled", val, addr);
                 self.iospace[addr as usize - 0xFF00] = val;
@@ -123,6 +163,7 @@ impl Bus {
     fn read_io(&self, addr: u16) -> u8 {
         match addr {
             0xFF00 => (*self.joypad).borrow().get_key_register(),
+            0xFF02 => 0xFF,
             0xFF03 => (*self.timer).borrow().divider_lo(),
             0xFF04 => (*self.timer).borrow().divider(),
             0xFF05 => (*self.timer).borrow().tima,
@@ -131,8 +172,23 @@ impl Bus {
             0xFF0F => (*self.interrupts).borrow_mut().get_interrupt_request(),
             0xFF10..=0xFF3F => (*self.apu).borrow().read(addr),
             0xFF46 => (*self.dma.as_ref().unwrap()).borrow().mem_index(),
-            0xFF40..=0xFF4F => (*self.ppu).borrow_mut().read(addr, false),
+            0xFF4D => {
+                unsafe {
+                    let cpu = self.cpu.as_ref().unwrap().as_ptr();
+                    let res = if matches!((*cpu).speed(), Speed::Double) {
+                        0x80
+                    } else {
+                        0x00
+                    }; 
+                    res
+                }
+            }, 
+            0xFF40..=0xFF4F | 0xFF68..=0xFF6B => (*self.ppu).borrow_mut().read(addr, false),
             0xFF50 => 1,
+            0xFF51..=0xFF55 => if let Some(hdma) = self.hdma.as_ref() { 
+                hdma.borrow().read(addr) 
+            } else { 0xFF },
+            0xFF70 => self.wram.bank1_index as u8,
             _ => {
                 warn!("Read from I/O port 0x{:X} unhandled", addr);
                 self.iospace[addr as usize - 0xFF00]
@@ -200,5 +256,13 @@ impl Bus {
             0xFFFF => (*self.interrupts).borrow_mut().set_interrupt_enable(val),
             _ => unimplemented!()
         }
+    }
+    
+    pub fn hdma_halt_cpu(&mut self) {
+        self.cpu.as_ref().unwrap().borrow_mut().hdma_halt();
+    }
+    
+    pub fn hdma_continue(&mut self) {
+        self.cpu.as_ref().unwrap().borrow_mut().hdma_continue();
     }
 }

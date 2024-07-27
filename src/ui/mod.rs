@@ -1,5 +1,6 @@
 mod widgets;
 
+use std::collections::VecDeque;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -102,6 +103,8 @@ pub struct OhBoiUi {
     sdl_window: Window,
     renderer: Renderer,
     game_window: GameWindow,
+    //#[cfg(feature = "debug_ui")]
+    //tile_window: TileWindow,
     #[cfg(feature = "debug_ui")]
     waveform_window: WaveformWindow,
     #[cfg(feature = "debug_ui")]
@@ -111,11 +114,11 @@ pub struct OhBoiUi {
     textures: Textures<Texture>,
     audio_device: sdl2::audio::AudioQueue<f32>,
     #[cfg(feature = "debug_ui")]
-    log_buffer: Arc<Mutex<Vec<ImguiLogString>>>
+    log_buffer: Arc<Mutex<VecDeque<ImguiLogString>>>
 }
 
 impl OhBoiUi {
-    pub fn new(log_buffer: Option<Arc<Mutex<Vec<ImguiLogString>>>>)
+    pub fn new(log_buffer: Option<Arc<Mutex<VecDeque<ImguiLogString>>>>)
         -> Result<Self, Box<dyn Error>> {
         let mut imgui = imgui::Context::create();
         imgui.set_ini_filename(None);
@@ -148,8 +151,13 @@ impl OhBoiUi {
 
         let mut textures = Textures::<Texture>::new();
         let gb_screen_texture = new_texture(GB_SCREEN_WIDTH, GB_SCREEN_HEIGHT, &gl, &mut textures)?;
+        
+        //#[cfg(feature = "debug_ui")]
+        //let tile_texture = new_texture(32 * 8, 12 * 8, &gl, &mut textures)?;
+        
         let renderer = Renderer::initialize(&gl, &mut imgui, &mut textures, false)?;
         let game_window = GameWindow::new(gb_screen_texture);
+        
 
         let audio_context = sdl.audio().unwrap();
         let spec = sdl2::audio::AudioSpecDesired {
@@ -161,10 +169,11 @@ impl OhBoiUi {
         audio_device.resume();
         cfg_if!{
             if #[cfg(feature = "debug_ui")] {
+                //let tile_window = TileWindow::new(tile_texture);
                 let waveform_window = WaveformWindow::new();
                 let rom_window = HexView::new("ROM".to_string());
                 let ext_ram_window = HexView::new("External RAM".to_string());
-                let log_buffer = log_buffer.unwrap_or(Arc::new(Mutex::new(Vec::new())));
+                let log_buffer = log_buffer.unwrap_or(Arc::new(Mutex::new(VecDeque::new())));
                 Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, waveform_window, rom_window, ext_ram_window, textures, audio_device, log_buffer })
             } else {
                 Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, textures, audio_device })
@@ -191,7 +200,7 @@ impl OhBoiUi {
                     if let Some(path) =
                         tinyfiledialogs::open_file_dialog("Open ROM",
                                                           "./",
-                                                          Some((&["*.gb"], "Gameboy ROMs")))
+                                                          Some((&["*.gb", "*.gbc"], "Gameboy ROMs")))
                     {
                         return Open(PathBuf::from(path));
                     }
@@ -234,6 +243,7 @@ impl OhBoiUi {
             let hex_view_width = widgets::calc_hex_view_width(ui, 16);
             let rom_pos = [330.0, 20.0];
             self.rom_window.show(ui, &gb.rom(), rom_pos, Some(0x4000));
+            //self.tile_window.show(ui);
             let ext_ram_pos = [330.0, 20.0 + 300.0 + 20.0];
             match gb.ext_ram() {
                 Some(ram) => self.ext_ram_window.show(ui, ram, ext_ram_pos, Some(0x2000)),
@@ -274,6 +284,24 @@ impl OhBoiUi {
                 PixelUnpackData::Slice(screen)
             );
         }
+    }
+    
+    pub fn draw_tiles(&mut self, tiles: &[u8]) {
+        /*let &texture = self.textures.get(self.tile_window.texture_id()).unwrap();
+        unsafe {
+            self.gl.active_texture(texture.0.into());
+            self.gl.tex_sub_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                0 as _,
+                0 as _,
+                (32 * 8) as _,
+                (12 * 8) as _,
+                glow::RGBA as _,
+                glow::UNSIGNED_BYTE,
+                PixelUnpackData::Slice(tiles)
+            );
+        }*/
     }
 }
 
@@ -393,6 +421,34 @@ impl GameWindow {
         self.game_screen(ui, [0.0, imgui_menu_height], game_screen_size, text);
     }
 
+    pub fn texture_id(&self) -> TextureId {
+        self.texture
+    }
+}
+
+pub struct TileWindow {
+    texture: TextureId
+}
+
+impl TileWindow {
+    pub fn new(texture: TextureId) -> Self {
+        Self { texture }
+    }
+
+    pub fn show(&self, ui: &mut Ui) {
+        /*let _a = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
+        let _b = ui.push_style_var(StyleVar::ChildBorderSize(0.0));
+        ui.window("Tile Viewer")
+            .position([0.0, 0.0], Condition::FirstUseEver)
+            .size([8.0 * 32.0, 8.0 * 12.0], Condition::FirstUseEver)
+            .movable(true)
+            .resizable(true)
+            .draw_background(false)
+            .build(|| {
+                imgui::Image::new(self.texture, ui.content_region_avail()).build(ui);
+            }).unwrap();*/
+    }
+    
     pub fn texture_id(&self) -> TextureId {
         self.texture
     }

@@ -51,12 +51,12 @@ impl InterruptController {
     }
 
     pub fn raise(&mut self, interrupt: Interrupt) {
-        debug!("Interrupt {:?} raised", interrupt);
+        trace!("Interrupt {:?} raised", interrupt);
         self.int_request |= interrupt as u8;
     }
 
     pub fn serve(&mut self, interrupt: Interrupt) {
-        debug!("Interrupt {:?} served", interrupt);
+        trace!("Interrupt {:?} served", interrupt);
         self.int_request &= !(interrupt as u8);
     }
 

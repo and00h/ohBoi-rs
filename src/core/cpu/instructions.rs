@@ -536,8 +536,8 @@ pub static MNEMONICS: [&'static str; 256] = [
     "RST 0x38"                // 0xff
 ];
 
-fn unknown(_cpu: &mut Cpu) {
-    panic!("Unknown opcode!");
+fn unknown(_cpu: &mut Cpu, opcode: u8) {
+    panic!("Unknown opcode! 0x{:#04X} PC: 0x{:#04X}", opcode, _cpu.pc);
 }
 
 pub(crate) enum InstArg {
@@ -616,7 +616,7 @@ pub(super) static INSTRUCTIONS: [fn(&mut Cpu); 0x100] = [
     |cpu| cpu.one_arg(|cpu, arg| cpu.registers.set_reg8(C, arg)),
     |cpu| cpu.zero_latency(Cpu::rrca),
 
-    |cpu| cpu.zero_latency(Cpu::stop),
+    Cpu::stop,
     |cpu| cpu.load_word_imm(DE),
     |cpu| cpu.store_indirect(DE),
     |cpu| cpu.inc16(DE),
@@ -824,7 +824,7 @@ pub(super) static INSTRUCTIONS: [fn(&mut Cpu); 0x100] = [
     |cpu| cpu.ret_conditional(CpuFlag::Carry, true),
     |cpu| cpu.pop(DE),
     |cpu| cpu.jump_conditional(CpuFlag::Carry, true),
-    unknown,
+    |cpu| unknown(cpu, 0xD3),
     |cpu| cpu.call_conditional(CpuFlag::Carry, true),
     |cpu| cpu.push(DE),
     |cpu| cpu.one_arg(Cpu::sub),
@@ -832,34 +832,33 @@ pub(super) static INSTRUCTIONS: [fn(&mut Cpu); 0x100] = [
     |cpu| cpu.ret_conditional(CpuFlag::Carry, false),
     Cpu::reti,
     |cpu| cpu.jump_conditional(CpuFlag::Carry, false),
-    unknown,
+    |cpu| unknown(cpu, 0xDB),
     |cpu| cpu.call_conditional(CpuFlag::Carry, false),
-    unknown,
+    |cpu| unknown(cpu, 0xDD),
     |cpu| cpu.one_arg(Cpu::sbc),
     |cpu| cpu.rst(0x0018),
 
     Cpu::store_highmem_immediate,
     |cpu| cpu.pop(HL),
     Cpu::store_highmem_reg,
-    unknown,
-    unknown,
+    |cpu| unknown(cpu, 0xE3),
+    |cpu| unknown(cpu, 0xE4),
     |cpu| cpu.push(HL),
     |cpu| cpu.one_arg(Cpu::and),
     |cpu| cpu.rst(0x0020),
     Cpu::add_sp,
     |cpu| cpu.zero_latency(|cpu| cpu.pc = cpu.registers.get_reg16(HL)),
     Cpu::store_accumulator,
-    unknown,
-    unknown,
-    unknown,
+    |cpu| unknown(cpu, 0xEB),
+    |cpu| unknown(cpu, 0xEC),
+    |cpu| unknown(cpu, 0xED),
     |cpu| cpu.one_arg(Cpu::xor),
     |cpu| cpu.rst(0x0028),
-
     Cpu::load_highmem_immediate,
     |cpu| cpu.pop(AF),
     Cpu::load_highmem_reg,
     |cpu| cpu.zero_latency(Cpu::di),
-    unknown,
+    |cpu| unknown(cpu, 0xF4),
     |cpu| cpu.push(AF),
     |cpu| cpu.one_arg(Cpu::or),
     |cpu| cpu.rst(0x0030),
@@ -867,8 +866,8 @@ pub(super) static INSTRUCTIONS: [fn(&mut Cpu); 0x100] = [
     Cpu::ld_sp_hl,
     Cpu::load_accumulator,
     Cpu::ei,
-    unknown,
-    unknown,
+    |cpu| unknown(cpu, 0xFC),
+    |cpu| unknown(cpu, 0xFD),
     |cpu| cpu.one_arg(Cpu::cp),
     |cpu| cpu.rst(0x0038),
 ];

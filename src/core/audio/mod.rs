@@ -158,6 +158,7 @@ impl Apu {
         let reg: APUChannelReg = ((addr & 0xF) % 5).into();
         match addr {
             0xFF10..=0xFF14 => self.square1.write(reg, val),
+            0xFF15 => {},
             0xFF16..=0xFF19 => self.square2.write(reg, val),
             0xFF1A..=0xFF1E => self.wave_ch.write(reg, val),
             0xFF1F..=0xFF23 => self.noise.write(reg, val),
@@ -192,6 +193,7 @@ impl Apu {
 
         let val = match addr {
             0xFF10..=0xFF14 => self.square1.read(reg),
+            0xFF15 => 0xFF,
             0xFF16..=0xFF19 => self.square2.read(reg),
             0xFF1A..=0xFF1E => self.wave_ch.read(reg),
             0xFF1F..=0xFF23 => self.noise.read(reg),

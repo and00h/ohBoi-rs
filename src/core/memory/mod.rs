@@ -5,7 +5,7 @@ const BANK_SIZE: usize = 0x1000;
 
 pub(crate) struct WRAM {
     mem: Vec<u8>,
-    bank1_index: usize,
+    pub(crate) bank1_index: usize,
 }
 
 impl WRAM {
