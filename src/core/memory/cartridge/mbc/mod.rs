@@ -3,6 +3,7 @@ use crate::core::memory::cartridge::{Cartridge, CartridgeHeader, CartridgeType};
 
 pub(super) mod none;
 pub(super) mod mbc1;
+pub(super) mod mbc3;
 pub(super) mod mbc5;
 
 enum BankingMode {
@@ -52,6 +53,16 @@ pub(super) fn make_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u
         CartridgeType::MBC1_RAM =>
             Box::new(mbc1::Mbc1::new(rom, header, ram, false)),
         CartridgeType::MBC1_RAM_BATTERY => Box::new(mbc1::Mbc1::new(rom, header, ram, true)),
+        CartridgeType::MBC3_TIMER_BATTERY =>
+            Box::new(mbc3::Mbc3::new(rom, header, None, true, true)),
+        CartridgeType::MBC3_TIMER_RAM_BATTERY =>
+            Box::new(mbc3::Mbc3::new(rom, header, ram, true, true)),
+        CartridgeType::MBC3 =>
+            Box::new(mbc3::Mbc3::new(rom, header, None, false, false)),
+        CartridgeType::MBC3_RAM =>
+            Box::new(mbc3::Mbc3::new(rom, header, ram, false, false)),
+        CartridgeType::MBC3_RAM_BATTERY =>
+            Box::new(mbc3::Mbc3::new(rom, header, ram, true, false)),
         CartridgeType::MBC5 =>
             Box::new(mbc5::Mbc5::new(rom, header, None, false)),
         CartridgeType::MBC5_RAM =>
