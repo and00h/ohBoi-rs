@@ -2,10 +2,13 @@ mod instructions;
 mod prefixed_insts;
 
 use std::cell::{Ref, RefCell};
+use std::collections::HashMap;
 use std::collections::vec_deque::VecDeque;
 use std::fmt::{Debug, Formatter};
+use std::ops::{Index, IndexMut};
 use std::rc::{Rc, Weak};
 use log::{debug, error, info, trace, warn};
+use strfmt::strfmt;
 use crate::core::bus::{Bus, BusController};
 use crate::core::interrupts::{Interrupt, InterruptController};
 
@@ -45,9 +48,9 @@ pub(crate) enum CpuFlag {
 pub enum Speed {
     Normal,
     Double,
-    Switching(bool)
 }
 
+#[derive(Clone)]
 pub(crate) struct Registers {
     regs: Vec<u8>,
     cgb: bool
@@ -57,8 +60,7 @@ use Register8::*;
 use Register16::*;
 use crate::core::cpu::CpuState::HdmaHalted;
 use crate::core::cpu::instructions::{InstArg, INSTRUCTIONS, InstructionType, MNEMONICS, NARGS};
-use crate::core::cpu::prefixed_insts::PREFIXED_INSTS;
-use crate::core::cpu::Speed::Switching;
+use crate::core::cpu::prefixed_insts::{PREFIXED_INSTS, PREFIXED_MNEMONICS};
 
 impl Registers {
     pub fn new(cgb: bool) -> Self {
@@ -154,6 +156,20 @@ impl Debug for Registers {
     }
 }
 
+impl Index<Register8> for Registers {
+    type Output = u8;
+
+    fn index(&self, index: Register8) -> &Self::Output {
+        &self.regs[index as usize]
+    }
+}
+
+impl IndexMut<Register8> for Registers {
+    fn index_mut(&mut self, index: Register8) -> &mut Self::Output {
+        &mut self.regs[index as usize]
+    }
+}
+
 pub(crate) static INTERRUPT_VECTORS: [(Interrupt, u16); 5] = [
     (Interrupt::JPAD, 0x60),
     (Interrupt::SERIAL, 0x58),
@@ -228,6 +244,9 @@ pub(crate) struct Cpu {
     cycles: u64,
     elapsed: u64,
     cgb: bool,
+    speed_switch_armed: bool,
+    #[cfg(feature = "debug_ui")]
+    current_inst_pc: u16
 }
 
 impl Cpu {
@@ -246,7 +265,10 @@ impl Cpu {
             speed: Speed::Normal,
             cycles: 0,
             elapsed: 0,
-            cgb
+            cgb,
+            speed_switch_armed: false,
+            #[cfg(feature = "debug_ui")]
+            current_inst_pc: 0x0100
         }
     }
 
@@ -257,9 +279,14 @@ impl Cpu {
         self.state = CpuState::Fetching { halt_bug: false };
 
         self.speed = Speed::Normal;
+        self.speed_switch_armed = false;
         self.cycles = 0;
 
         (*self.interrupt_controller).borrow_mut().reset();
+        
+        #[cfg(feature = "debug_ui")] {
+            self.current_inst_pc = 0x0100;
+        }
     }
     
     pub fn speed(&self) -> Speed {
@@ -268,6 +295,9 @@ impl Cpu {
 
     fn fetch(&mut self, halt_bug: bool) {
         let opcode = self.bus.read(self.pc);
+        #[cfg(feature = "debug_ui")] {
+            self.current_inst_pc = self.pc;
+        }
         if !halt_bug { self.pc += 1; }
         self.state = CpuState::Decoding(opcode);
     }
@@ -313,9 +343,16 @@ impl Cpu {
             CpuState::Fetching { halt_bug: false }
         }
     }
-    
+
+    // Do not optimize away
+
     pub fn arm_speed_switch(&mut self) {
-        self.speed = Switching(matches!(self.speed, Speed::Normal));
+        core::hint::black_box(&self.speed);
+        self.speed_switch_armed = true;
+    }
+
+    pub fn is_speed_switching(&self) -> bool {
+        self.speed_switch_armed
     }
 
     fn interrupt_service_routine(&mut self) {
@@ -376,11 +413,61 @@ impl Cpu {
             | InterruptWaitState1 | InterruptWaitState2
             | InterruptPushPCHi | InterruptPushPCLo
             | InterruptUpdatePC => self.interrupt_service_routine(),
-            HdmaHalted => {},
+            HdmaHalted => warn!("Dafuq"),
             _ => (self.instruction)(self)
         }
         debug_assert!(old_state != self.state || matches!(self.state, Stopped(_) | Halted | HdmaHalted));
         // trace!("{:?} => {:?}", old_state, self.state);
+    }
+    
+    #[cfg(feature = "debug_ui")]
+    pub fn get_current_instructions(&self, window_size: Option<i32>) -> Vec<(usize, String)> {
+        let window_size = window_size.unwrap_or(16);
+        let mut instructions = Vec::new();
+        let mut i = 0;
+        let mut cur_inst_addr = self.current_inst_pc;
+        while i < window_size {
+            let opcode = self.bus.read(cur_inst_addr);
+            let mut vars = HashMap::new();
+            let mut next_inst_addr = cur_inst_addr.wrapping_add(1);
+            let mut format = String::from(MNEMONICS[opcode as usize]);
+            match NARGS[opcode as usize] {
+                1 => {
+                    let arg = self.bus.read(cur_inst_addr.wrapping_add(1));
+                    if opcode != 0xCB {
+                        vars.insert("arg8".to_string(), format!("${:02X}", arg));
+                    } else {
+                        format = String::from(PREFIXED_MNEMONICS[arg as usize]);
+                    }
+                    next_inst_addr = cur_inst_addr.wrapping_add(2);
+                },
+                2 => {
+                    let arg = self.bus.read(cur_inst_addr.wrapping_add(1));
+                    let arg2 = self.bus.read(cur_inst_addr.wrapping_add(2));
+                    let complete_arg = (arg2 as u16) << 8 | arg as u16;
+                    vars.insert("arg16".to_string(), format!("${:04X}", complete_arg));
+                    next_inst_addr = cur_inst_addr.wrapping_add(3);
+                },
+                _ => {}
+            }
+            instructions.push((cur_inst_addr as usize, strfmt(&format, &vars).unwrap()));
+            if next_inst_addr < cur_inst_addr {
+                break;
+            }
+            cur_inst_addr = next_inst_addr;
+            i += 1;
+        }
+        instructions
+    }
+    
+    #[cfg(feature = "debug_ui")]
+    pub fn get_current_inst_pc(&self) -> u16 {
+        self.current_inst_pc
+    }
+
+    #[cfg(feature = "debug_ui")]
+    pub fn get_registers(&self) -> Registers {
+        self.registers.clone()
     }
     
     pub fn hdma_halt(&mut self) {
@@ -1071,12 +1158,12 @@ impl Cpu {
                     CpuState::PushHi
                 },
                 CpuState::PushHi => {
-                    self.sp -= 1;
+                    self.sp = self.sp.wrapping_sub(1);
                     self.bus.write(self.sp, self.registers.get_reg8(hi));
                     CpuState::PushLo
                 },
                 CpuState::PushLo => {
-                    self.sp -= 1;
+                    self.sp = self.sp.wrapping_sub(1);
                     self.bus.write(self.sp, self.registers.get_reg8(lo));
                     CpuState::FinishedExecution
                 },
@@ -1442,10 +1529,7 @@ impl Cpu {
                 },
                 CpuState::Stopped(remaining) => {
                     if remaining == 0 {
-                        if let Switching(double) = self.speed {
-                            self.speed = if double { Speed::Double } else { Speed::Normal }
-                        };
-                        error!("Ended speed switch");
+                        self.speed = if matches!(self.speed, Speed::Normal) { Speed::Double } else { Speed::Normal };
                         CpuState::FinishedExecution
                     } else {
                         CpuState::Stopped(remaining - 1)

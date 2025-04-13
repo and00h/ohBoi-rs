@@ -18,7 +18,7 @@ use crate::ui::GameWindowEvent::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let log_buffer = Arc::new(Mutex::new(VecDeque::new()));
-    setup_logger(3, 0, Arc::clone(&log_buffer))?;
+    setup_logger(3, 1, Arc::clone(&log_buffer))?;
     
     info!("Starting ohBoi");
     let mut gb = GameBoy::new(PathBuf::from("./tetris.gb"))?;
@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut fps = String::from("0.0");
         let mut rendered = false;
         let mut speed = 1;
-        while gb.cycle_counter() < 4194304 / 60 * speed {
+        while gb.cycle_counter() < 4194304 / 60 * speed && gb.is_running() {
             gb.clock();
             match gb.audio_output() {
                 Some(out) => {

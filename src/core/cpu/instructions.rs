@@ -277,70 +277,70 @@ pub static NARGS: [usize; 256] = [
     0    // 0xFF
 ];
 
-pub static MNEMONICS: [&'static str; 256] = [
+pub const MNEMONICS: &'static [&'static str; 256] = &[
     "NOP",                    // 0x00
-    "LD BC, {:04X}",        // 0x01
+    "LD BC, {arg16}",        // 0x01
     "LD (BC), A",            // 0x02
     "INC BC",                // 0x03
     "INC B",                // 0x04
     "DEC B",                // 0x05
-    "LD B, {:02X}",            // 0x06
+    "LD B, {arg8}",            // 0x06
     "RLCA",                    // 0x07
-    "LD ({:04X}), SP",        // 0x08
+    "LD ({arg16}), SP",        // 0x08
     "ADD HL, BC",            // 0x09
     "LD A, (BC)",            // 0x0a
     "DEC BC",                // 0x0b
     "INC C",                // 0x0c
     "DEC C",                // 0x0d
-    "LD C, {:02X}",            // 0x0e
+    "LD C, {arg8}",            // 0x0e
     "RRCA",                    // 0x0f
     "STOP",                    // 0x10
-    "LD DE, {:04X}",        // 0x11
+    "LD DE, {arg16}",        // 0x11
     "LD (DE), A",            // 0x12
     "INC DE",                // 0x13
     "INC D",                // 0x14
     "DEC D",                // 0x15
-    "LD D, {:02X}",            // 0x16
+    "LD D, {arg8}",            // 0x16
     "RLA",                    // 0x17
-    "JR {:02X}",            // 0x18
+    "JR {arg8}",            // 0x18
     "ADD HL, DE",            // 0x19
     "LD A, (DE)",            // 0x1a
     "DEC DE",                // 0x1b
     "INC E",                // 0x1c
     "DEC E",                // 0x1d
-    "LD E, {:02X}",            // 0x1e
+    "LD E, {arg8}",            // 0x1e
     "RRA",                    // 0x1f
-    "JR NZ, {:02X}",        // 0x20
-    "LD HL, {:04X}",        // 0x21
+    "JR NZ, {arg8}",        // 0x20
+    "LD HL, {arg16}",        // 0x21
     "LDI (HL), A",            // 0x22
     "INC HL",                // 0x23
     "INC H",                // 0x24
     "DEC H",                // 0x25
-    "LD H, {:02X}",            // 0x26
+    "LD H, {arg8}",            // 0x26
     "DAA",                    // 0x27
-    "JR Z, {:02X}",            // 0x28
+    "JR Z, {arg8}",            // 0x28
     "ADD HL, HL",            // 0x29
     "LDI A, (HL)",            // 0x2a
     "DEC HL",                // 0x2b
     "INC L",                // 0x2c
     "DEC L",                // 0x2d
-    "LD L, {:02X}",            // 0x2e
+    "LD L, {arg8}",            // 0x2e
     "CPL",                    // 0x2f
-    "JR NC, {:02X}",        // 0x30
-    "LD SP, {:04X}",        // 0x31
+    "JR NC, {arg8}",        // 0x30
+    "LD SP, {arg16}",        // 0x31
     "LDD (HL), A",            // 0x32
     "INC SP",                // 0x33
     "INC (HL)",                // 0x34
     "DEC (HL)",                // 0x35
-    "LD (HL), {:02X}",        // 0x36
+    "LD (HL), {arg8}",        // 0x36
     "SCF",                    // 0x37
-    "JR C, {:02X}",            // 0x38
+    "JR C, {arg8}",            // 0x38
     "ADD HL, SP",            // 0x39
     "LDD A, (HL)",            // 0x3a
     "DEC SP",                // 0x3b
     "INC A",                // 0x3c
     "DEC A",                // 0x3d
-    "LD A, {:02X}",            // 0x3e
+    "LD A, {arg8}",            // 0x3e
     "CCF",                    // 0x3f
     "LD B, B",                // 0x40
     "LD B, C",                // 0x41
@@ -472,67 +472,67 @@ pub static MNEMONICS: [&'static str; 256] = [
     "CP A",                    // 0xbf
     "RET NZ",                // 0xc0
     "POP BC",                // 0xc1
-    "JP NZ, {:04X}",        // 0xc2
-    "JP {:04X}",            // 0xc3
-    "CALL NZ, {:04X}",        // 0xc4
+    "JP NZ, {arg16}",        // 0xc2
+    "JP {arg16}",            // 0xc3
+    "CALL NZ, {arg16}",        // 0xc4
     "PUSH BC",                // 0xc5
-    "ADD A, {:02X}",        // 0xc6
+    "ADD A, {arg8}",        // 0xc6
     "RST 0x00",                // 0xc7
     "RET Z",                // 0xc8
     "RET",                    // 0xc9
-    "JP Z, {:04X}",            // 0xca
+    "JP Z, {arg16}",            // 0xca
     "CB %02X",                // 0xcb
-    "CALL Z, {:04X}",        // 0xcc
-    "CALL {:04X}",            // 0xcd
-    "ADC {:02X}",            // 0xce
+    "CALL Z, {arg16}",        // 0xcc
+    "CALL {arg16}",            // 0xcd
+    "ADC {arg8}",            // 0xce
     "RST 0x08",                // 0xcf
     "RET NC",                // 0xd0
     "POP DE",                // 0xd1
-    "JP NC, {:04X}",        // 0xd2
+    "JP NC, {arg16}",        // 0xd2
     "UNKNOWN",                // 0xd3
-    "CALL NC, {:04X}",        // 0xd4
+    "CALL NC, {arg16}",        // 0xd4
     "PUSH DE",                // 0xd5
-    "SUB {:02X}",            // 0xd6
+    "SUB {arg8}",            // 0xd6
     "RST 0x10",                // 0xd7
     "RET C",                // 0xd8
     "RETI",                    // 0xd9
-    "JP C, {:04X}",            // 0xda
+    "JP C, {arg16}",            // 0xda
     "UNKNOWN",                // 0xdb
-    "CALL C, {:04X}",        // 0xdc
+    "CALL C, {arg16}",        // 0xdc
     "UNKNOWN",                // 0xdd
-    "SBC {:02X}",            // 0xde
+    "SBC {arg8}",            // 0xde
     "RST 0x18",                // 0xdf
-    "LD (0xFF00 + {:02X}), A",        // 0xe0
+    "LD (0xFF00 + {arg8}), A",        // 0xe0
     "POP HL",                // 0xe1
     "LD (0xFF00 + C), A",    // 0xe2
     "UNKNOWN",                // 0xe3
     "UNKNOWN",                // 0xe4
     "PUSH HL",                // 0xe5
-    "AND {:02X}",            // 0xe6
+    "AND {arg8}",            // 0xe6
     "RST 0x20",                // 0xe7
-    "ADD SP,{:02X}",        // 0xe8
+    "ADD SP,{arg8}",        // 0xe8
     "JP HL",                // 0xe9
-    "LD ({:04X}), A",        // 0xea
+    "LD ({arg16}), A",        // 0xea
     "UNKNOWN",                // 0xeb
     "UNKNOWN",                // 0xec
     "UNKNOWN",                // 0xed
-    "XOR {:02X}",            // 0xee
+    "XOR {arg8}",            // 0xee
     "RST 0x28",                // 0xef
-    "LD A, (0xFF00 + {:02X})",        // 0xf0
+    "LD A, (0xFF00 + {arg8})",        // 0xf0
     "POP AF",                // 0xf1
     "LD A, (0xFF00 + C)",    // 0xf2
     "DI",                    // 0xf3
     "UNKNOWN",                // 0xf4
     "PUSH AF",                // 0xf5
-    "OR {:02X}",            // 0xf6
+    "OR {arg8}",            // 0xf6
     "RST 0x30",                // 0xf7
-    "LD HL, SP+{:02X}",        // 0xf8
+    "LD HL, SP+{arg8}",        // 0xf8
     "LD SP, HL",            // 0xf9
-    "LD A, ({:04X})",        // 0xfa
+    "LD A, ({arg16})",        // 0xfa
     "EI",                    // 0xfb
     "UNKNOWN",                // 0xfc
     "UNKNOWN",                // 0xfd
-    "CP {:02X}",            // 0xfe
+    "CP {arg8}",            // 0xfe
     "RST 0x38"                // 0xff
 ];
 

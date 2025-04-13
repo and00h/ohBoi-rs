@@ -4,6 +4,8 @@ use std::cmp::{max, max_by, min};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use imgui::{Condition, StyleColor, StyleVar, Ui, WindowFlags};
+use crate::core::cpu::Register16;
+use crate::core::GameBoy;
 use crate::logging::ImguiLogString;
 
 pub fn hex_view(ui: &Ui, bytes_per_row: usize, data: &[u8], split_threshold: Option<usize>, selected: &mut usize) {
@@ -110,6 +112,89 @@ impl HexView {
             .size([width, 300.0], Condition::FirstUseEver)
             .build(|| {
                 hex_view(ui, 16, data, split_threshold, &mut self.current_bank);
+            });
+    }
+
+    pub fn toggle(&mut self) {
+        self.toggle = !self.toggle;
+    }
+}
+
+pub(super) struct DisassemblyView {
+    // ...
+    toggle: bool,
+    title: String
+    // ...
+}
+
+impl DisassemblyView {
+    // ...
+    pub fn new(title: String) -> Self {
+        DisassemblyView {
+            toggle: true,
+            title
+        }
+    }
+
+    pub fn show(&mut self, ui: &mut Ui, gb: &mut GameBoy, position: [f32; 2]) {
+        if !self.toggle {
+            return;
+        }
+        let instructions = gb.get_current_instruction_window();
+        let cur_pc = gb.get_current_instr_pc();
+        ui.window(self.title.as_str())
+            .position(position, Condition::FirstUseEver)
+            .size([500.0, 400.0], Condition::FirstUseEver)
+            .build(|| {
+                if gb.is_running() {
+                    if ui.button("Stop") {
+                        gb.debug_stop();
+                    }
+                } else {
+                    if ui.button("Continue") {
+                        gb.debug_continue();
+                    }
+                }
+                ui.same_line();
+                if ui.button("Step") {
+                    gb.debug_step();
+                }
+                ui.columns(2, "##disassembly_view_columns_ao", false);
+                ui.set_column_width(0, 300.0);
+                ui.set_column_width(1, 100.0);
+                ui.text("Disassembly");
+                ui.next_column();
+                ui.text("Registers");
+                ui.next_column();
+                ui.child_window("disass")
+                    .border(false)
+                    .build(|| {
+                        ui.columns(2, "##disassembly_view_columns", true);
+                        ui.set_column_width(0, 100.0);
+                        ui.set_column_width(1, 200.0);
+                        ui.text("Address");
+                        ui.next_column();
+                        ui.text("Instruction");
+                        ui.next_column();
+                        for (addr, instruction) in instructions.iter() {
+                            let color = if *addr == cur_pc {
+                                ui.push_style_color(StyleColor::Text, [1.0, 0.0, 0.0, 1.0])
+                            } else {
+                                ui.push_style_color(StyleColor::Text, [1.0, 1.0, 1.0, 1.0])
+                            };
+                            ui.text(format!("{:04X}", addr));
+                            ui.next_column();
+                            ui.text(instruction);
+                            ui.next_column();
+                            color.pop();
+                        }
+                    });
+                ui.next_column();
+                let registers = gb.get_cpu_registers();
+                ui.text(format!("AF: {:04X}", registers.get_reg16(Register16::AF)));
+                ui.text(format!("BC: {:04X}", registers.get_reg16(Register16::BC)));
+                ui.text(format!("DE: {:04X}", registers.get_reg16(Register16::DE)));
+                ui.text(format!("HL: {:04X}", registers.get_reg16(Register16::HL)));
             });
     }
 

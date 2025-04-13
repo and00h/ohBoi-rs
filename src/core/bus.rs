@@ -179,7 +179,7 @@ impl Bus {
                         0x80
                     } else {
                         0x00
-                    }; 
+                    } | if (*cpu).is_speed_switching() { 1 } else { 0 }; 
                     res
                 }
             }, 

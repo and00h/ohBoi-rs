@@ -23,6 +23,7 @@ tinyfiledialogs = "3.9.1"
 openal = "0.2.2"
 cfg-if = "1.0.0"
 regex = "1.10.4"
+strfmt = "0.2.4"
 
 [features]
 debug_ui = []

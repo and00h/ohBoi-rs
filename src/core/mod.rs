@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use crate::core::audio::{Apu};
 use crate::core::bus::Bus;
-use crate::core::cpu::{Cpu, Speed};
+use crate::core::cpu::{Cpu, Registers, Speed};
 use crate::core::ppu::{Ppu, PpuState};
 use crate::core::interrupts::InterruptController;
 use crate::core::joypad::{Joypad, Key};
@@ -47,7 +47,8 @@ pub struct GameBoy {
     timer: Rc<RefCell<Timer>>,
     cartridge: Rc<RefCell<Cartridge>>,
     cycle_counter: u64,
-    enable_audio_channels: (bool, bool, bool, bool)
+    enable_audio_channels: (bool, bool, bool, bool),
+    stopped: bool,
 }
 
 impl GameBoy {
@@ -82,16 +83,20 @@ impl GameBoy {
                 b.set_hdma_controller(Rc::clone(hdma_controller.as_ref().unwrap()));
             }
         }
-        Ok(Self { joypad, bus, cpu, ppu, apu, dma, hdma_controller, timer, cartridge: Rc::clone(&cartridge), cycle_counter: 0, enable_audio_channels: (true, true, true, true) })
+        Ok(Self { joypad, bus, cpu, ppu, apu, dma, hdma_controller, timer, cartridge: Rc::clone(&cartridge), cycle_counter: 0, enable_audio_channels: (true, true, true, true), stopped: false })
     }
 
     pub fn clock(&mut self) {
+        if self.stopped {
+            return;
+        }
         use cpu::CpuState;
+        let speed_switch_armed = (*self.cpu).borrow().is_speed_switching();
         let cpu_speed = (*self.cpu).borrow().speed();
         let cpu_state = (*self.cpu).borrow().state().to_owned();
         let clocks = if matches!(cpu_speed, Speed::Double) { 2 } else { 1 };
         
-        if matches!(cpu_speed, Speed::Switching(_)) && matches!(cpu_state, CpuState::Stopped(2050)) {
+        if speed_switch_armed && matches!(cpu_state, CpuState::Stopped(2051)) {
             let mut timer = (*self.timer).borrow_mut();
             timer.reset_counter();
         }
@@ -187,5 +192,45 @@ impl GameBoy {
     #[cfg(feature = "debug_ui")]
     pub fn get_tileset0(&self) -> Vec<u8> {
         (*self.ppu).borrow().get_tileset0()
+    }
+    
+    #[cfg(feature = "debug_ui")]
+    pub fn debug_stop(&mut self) {
+        self.stopped = true;
+    }
+
+    #[cfg(feature = "debug_ui")]
+    pub fn debug_continue(&mut self) {
+        self.stopped = false;
+    }
+    
+    #[cfg(feature = "debug_ui")]
+    pub fn debug_step(&mut self) {
+        self.stopped = false;
+        let cur_pc = (*self.cpu).borrow().get_current_inst_pc();
+        while cur_pc == (*self.cpu).borrow().get_current_inst_pc() {
+            self.clock();
+        }
+        self.stopped = true;
+    }
+    
+    #[cfg(feature = "debug_ui")]
+    pub fn get_cpu_registers(&self) -> Registers {
+        (*self.cpu).borrow().get_registers()
+    }
+    
+    #[cfg(feature = "debug_ui")]
+    pub fn get_current_instruction_window(&self) -> Vec<(usize, String)> {
+        (*self.cpu).borrow().get_current_instructions(None)
+    }
+    
+    #[cfg(feature = "debug_ui")]
+    pub fn get_current_instr_pc(&self) -> usize {
+        (*self.cpu).borrow().get_current_inst_pc() as usize
+    }
+    
+    #[cfg(feature = "debug_ui")]
+    pub fn is_running(&self) -> bool {
+        !self.stopped
     }
 }

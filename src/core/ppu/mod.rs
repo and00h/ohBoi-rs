@@ -330,7 +330,7 @@ impl Ppu {
             0x8000..=0x9FFF => self.read_vram(addr - 0x8000, self.vram_bank as usize),
             0xFE00..=0xFE9F => self.read_oam(addr - 0xFE00, dma),
             0xFF40 => self.lcdc.0,
-            0xFF41 => self.lcd_stat.0,
+            0xFF41 => self.lcd_stat.0 & (if !self.lcdc.lcd_enable() { 0xFC } else { 0xFF }),
             0xFF42 => self.scroll_y,
             0xFF43 => self.scroll_x,
             0xFF44 => self.ly as u8,

@@ -20,6 +20,7 @@ use crate::core::GameBoy;
 use crate::core::joypad::Key;
 use crate::logging::ImguiLogString;
 use crate::ui::GameWindowEvent::{Close, Nothing, Open, ToggleWaveform};
+use crate::ui::widgets::DisassemblyView;
 
 #[cfg(feature = "debug_ui")]
 use crate::ui::widgets::HexView;
@@ -111,6 +112,8 @@ pub struct OhBoiUi {
     rom_window: HexView,
     #[cfg(feature = "debug_ui")]
     ext_ram_window: HexView,
+    #[cfg(feature = "debug_ui")]
+    disasm_window: DisassemblyView,
     textures: Textures<Texture>,
     audio_device: sdl2::audio::AudioQueue<f32>,
     #[cfg(feature = "debug_ui")]
@@ -173,8 +176,9 @@ impl OhBoiUi {
                 let waveform_window = WaveformWindow::new();
                 let rom_window = HexView::new("ROM".to_string());
                 let ext_ram_window = HexView::new("External RAM".to_string());
+                let disasm_window = DisassemblyView::new("Disassembly".to_string());
                 let log_buffer = log_buffer.unwrap_or(Arc::new(Mutex::new(VecDeque::new())));
-                Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, waveform_window, rom_window, ext_ram_window, textures, audio_device, log_buffer })
+                Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, waveform_window, rom_window, ext_ram_window, disasm_window, textures, audio_device, log_buffer })
             } else {
                 Ok(Self { sdl, gl, gl_context, imgui, platform, sdl_window, renderer, game_window, textures, audio_device })
             }
@@ -255,7 +259,7 @@ impl OhBoiUi {
                 ToggleWaveform => self.waveform_window.toggle(),
                 _ => {}
             }
-            
+            self.disasm_window.show(ui, gb, [ui.item_rect_size()[0] + ui.cursor_pos()[0], 20.0 + 300.0 + 20.0]);
             widgets::log_window(ui, "Log", Arc::clone(&self.log_buffer));
         }}
 
