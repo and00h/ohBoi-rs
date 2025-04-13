@@ -108,6 +108,8 @@ impl GameBoy {
             if matches!(self.cpu.borrow().state(), CpuState::HdmaHalted) &&
                 matches!(hdma.borrow().state(), HdmaState::HBlankTransferFinishedBlock | HdmaState::Idle) {
                 self.cpu.borrow_mut().hdma_continue();
+            } else if matches!(self.cpu.borrow().state(), CpuState::Halting | CpuState::Halted) {
+                self.cpu.borrow_mut().hdma_halt();
             }
         }
         
@@ -232,5 +234,15 @@ impl GameBoy {
     #[cfg(feature = "debug_ui")]
     pub fn is_running(&self) -> bool {
         !self.stopped
+    }
+
+    #[cfg(feature = "debug_ui")]
+    pub fn tiles(&self) -> Vec<u8> {
+        let mut tiles = (*self.ppu).borrow().get_tileset0();
+        if let Some(t) = (*self.ppu).borrow().get_tileset1() {
+            tiles.append(&mut t.to_owned());
+        }
+
+        tiles
     }
 }

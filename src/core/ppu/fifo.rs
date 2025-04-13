@@ -9,81 +9,86 @@ enum PixelFetcherState {
     Push
 }
 
-pub struct PixelFetcher {
-    current_sprite: Sprite,
-    state: PixelFetcherState,
-
-    tile_row_index: u16,
-    tile_row_addr: u16,
-    tile_index: i32,
-    tile_y: u8,
-
-    scroll_quantity: u8,
-
-    sprite_tile_index: u8,
-    sprite_tile_y: u8,
-    pub(crate) rendering_sprites: bool,
-
-    dot_clock_divider: bool,
-    tile_attributes: TileAttributes,
-    bg_fifo: VecDeque<TilePixel>,
-    spr_fifo: VecDeque<SpritePixel>,
+struct TileData {
+    pub tile_row_index: u16,
+    pub tile_row_addr: u16,
+    pub tile_index: i32,
+    pub tile_y: u8,
+    tile_attributes: TileAttributes
 }
 
-impl PixelFetcher {
-    pub fn new() -> Self {
-        Self {
-            current_sprite: Sprite::default(),
-            state: PixelFetcherState::GetTile,
-            tile_row_index: 0,
-            tile_row_addr: 0,
-            tile_index: 0,
-            tile_y: 0,
-            scroll_quantity: 0,
-            sprite_tile_index: 0,
-            sprite_tile_y: 0,
-            rendering_sprites: false,
-            dot_clock_divider: false,
-            tile_attributes: TileAttributes::default(),
-            bg_fifo: VecDeque::new(),
-            spr_fifo: VecDeque::new(),
-        }
-    }
-
+impl TileData {
     pub fn reset(&mut self) {
-        self.current_sprite = Sprite::default();
-        self.state = PixelFetcherState::GetTile;
         self.tile_row_index = 0;
         self.tile_row_addr = 0;
         self.tile_index = 0;
         self.tile_y = 0;
-        self.scroll_quantity = 0;
+        self.tile_attributes = TileAttributes::default();
+    }
+
+    pub fn start_fetch(&mut self, x: u8, y: u8, tile_map: u16) {
+        self.tile_index = 0;
+        self.tile_y = y & 7;
+        self.tile_row_index = (x >> 3) as u16;
+        self.tile_row_addr = tile_map + (((y as u16) >> 3) << 5);
+    }
+
+    pub fn update_tile_index(&mut self, vram: &[u8], signed_tileset: bool, cgb: bool) {
+        self.tile_index = vram[(self.tile_row_addr + self.tile_row_index) as usize] as i32;
+        if signed_tileset {
+            self.tile_index = (self.tile_index as i8) as i32 + 256;
+        }
+        self.tile_attributes = if cgb {
+            TileAttributes(vram[(self.tile_row_addr + self.tile_row_index + 0x2000) as usize])
+        } else {
+            TileAttributes::default()
+        };
+    }
+
+    pub fn get_tile_pixel(&self, tileset: &Tileset, x: usize) -> TilePixel {
+        match tileset {
+            &Tileset::Dmg(tileset) => TilePixel {
+                color: tileset[self.tile_index as usize].colors[self.tile_y as usize][x],
+                palette: 0,
+                priority: false,
+            },
+            &Tileset::Cgb(tileset0, tileset1) => {
+                let x = if !self.tile_attributes.x_flip() { x } else { 7 - x };
+                let y = if !self.tile_attributes.y_flip() { self.tile_y } else { 7 - self.tile_y } as usize;
+                let tile = if self.tile_attributes.bank() {
+                    &tileset1[self.tile_index as usize]
+                } else {
+                    &tileset0[self.tile_index as usize]
+                };
+                TilePixel {
+                    color: tile.colors[y][x],
+                    palette: self.tile_attributes.palette(),
+                    priority: self.tile_attributes.priority(),
+                }
+            },
+        }
+    }
+
+    #[inline]
+    pub fn increment_row_index(&mut self) {
+        self.tile_row_index = (self.tile_row_index + 1) & 0x1F;
+    }
+}
+
+struct SpriteData {
+    pub current_sprite: Sprite,
+    pub sprite_tile_index: u8,
+    pub sprite_tile_y: u8
+}
+
+impl SpriteData {
+    pub fn reset(&mut self) {
         self.sprite_tile_index = 0;
         self.sprite_tile_y = 0;
-        self.rendering_sprites = false;
-        self.dot_clock_divider = false;
-        self.tile_attributes = TileAttributes::default();
-        self.bg_fifo.clear();
-        self.spr_fifo.clear();
+        self.current_sprite = Sprite::default();
     }
 
-    pub fn start(&mut self, x: u8, y: u8, tile_map: u16, scroll: u8) {
-        self.state = PixelFetcherState::GetTile;
-        self.tile_index = 0;
-        self.dot_clock_divider = false;
-
-        self.tile_y = y & 7;
-        
-        self.tile_row_index = (x >> 3) as u16;
-        self.scroll_quantity = scroll;
-        self.tile_row_addr = tile_map + (((y as u16) >> 3) << 5);
-        self.rendering_sprites = false;
-
-        self.bg_fifo.clear();
-    }
-
-    pub fn start_sprite_fetch(&mut self, sprite: Sprite, use_8x16: bool, y: u8) {
-        self.state = PixelFetcherState::GetTile;
+    pub fn start_fetch(&mut self, y: u8, sprite: &Sprite, use_8x16: bool) {
         self.sprite_tile_index = sprite.tile_location;
         if use_8x16 {
             if y >= sprite.y.wrapping_sub(8) {
@@ -93,19 +98,129 @@ impl PixelFetcher {
             }
         }
         self.sprite_tile_y = (y.wrapping_sub(sprite.y)) & 0b00000111;
-        self.dot_clock_divider = false;
         if sprite.y_flip() {
             self.sprite_tile_y = 7 - self.sprite_tile_y;
             if use_8x16 {
-                if y >= sprite.y - 8 {
+                if y >= sprite.y.wrapping_sub(8) {
                     self.sprite_tile_index &= 0xFE;
                 } else {
                     self.sprite_tile_index |= 1
                 }
             }
         }
+        self.current_sprite = *sprite;
+    }
+
+    pub fn get_sprite_pixel(&self, tile_x: usize, tileset: &Tileset) -> SpritePixel {
+        match tileset {
+            Tileset::Dmg(tileset) => {
+                let sprite_y = self.sprite_tile_y as usize;
+                let sprite_x = if self.current_sprite.x_flip() { tile_x } else { 7 - tile_x };
+                let color = tileset[self.sprite_tile_index as usize].colors[sprite_y][sprite_x];
+                SpritePixel {
+                    pixel: TilePixel {
+                        color,
+                        palette: self.current_sprite.dmg_palette_number(),
+                        priority: self.current_sprite.has_priority(),
+                    },
+                    oam_offset: self.current_sprite.oam_offset,
+                }
+            },
+            Tileset::Cgb(tileset0, tileset1) => {
+                let x = if self.current_sprite.x_flip() { tile_x } else { 7 - tile_x };
+                let y = self.sprite_tile_y as usize;
+                let tile = if self.current_sprite.attributes.vram_bank()  {
+                    &tileset1[self.sprite_tile_index as usize]
+                } else {
+                    &tileset0[self.sprite_tile_index as usize]
+                };
+                let color = tile.colors[y][x];
+                SpritePixel {
+                    pixel: TilePixel {
+                        color,
+                        palette: self.current_sprite.cgb_palette_number(),
+                        priority: self.current_sprite.has_priority(),
+                    },
+                    oam_offset: self.current_sprite.oam_offset,
+                }
+            }
+        }
+    }
+
+    #[inline]
+    pub fn has_priority_over_sprite(&self, oam_offset: u8) -> bool {
+        self.current_sprite.oam_offset < oam_offset
+    }
+}
+
+pub struct PixelFetcher {
+    state: PixelFetcherState,
+    tile_data: TileData,
+    sprite_data: SpriteData,
+
+    scroll_quantity: u8,
+
+    pub(crate) rendering_sprites: bool,
+
+    dot_clock_divider: bool,
+    bg_fifo: VecDeque<TilePixel>,
+    spr_fifo: VecDeque<SpritePixel>,
+}
+
+impl PixelFetcher {
+    pub fn new() -> Self {
+        let sprite_data = SpriteData {
+            current_sprite: Sprite::default(),
+            sprite_tile_index: 0,
+            sprite_tile_y: 0,
+        };
+
+        let tile_data = TileData {
+            tile_row_index: 0,
+            tile_row_addr: 0,
+            tile_index: 0,
+            tile_y: 0,
+            tile_attributes: TileAttributes::default(),
+        };
+        Self {
+            state: PixelFetcherState::GetTile,
+            tile_data,
+            sprite_data,
+            scroll_quantity: 0,
+            rendering_sprites: false,
+            dot_clock_divider: false,
+            bg_fifo: VecDeque::new(),
+            spr_fifo: VecDeque::new(),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.state = PixelFetcherState::GetTile;
+        self.tile_data.reset();
+        self.sprite_data.reset();
+        self.scroll_quantity = 0;
+        self.rendering_sprites = false;
+        self.dot_clock_divider = false;
+        self.bg_fifo.clear();
+        self.spr_fifo.clear();
+    }
+
+    pub fn start(&mut self, x: u8, y: u8, tile_map: u16, scroll: u8) {
+        self.state = PixelFetcherState::GetTile;
+        self.dot_clock_divider = false;
+        self.scroll_quantity = scroll;
+        self.rendering_sprites = false;
+
+        self.tile_data.start_fetch(x, y, tile_map);
+
+        self.bg_fifo.clear();
+    }
+
+    pub fn start_sprite_fetch(&mut self, sprite: Sprite, use_8x16: bool, y: u8) {
+        self.state = PixelFetcherState::GetTile;
+        self.dot_clock_divider = false;
         self.rendering_sprites = true;
-        self.current_sprite = sprite;
+        self.sprite_data.start_fetch(y, &sprite, use_8x16);
     }
 
     pub fn step(&mut self, vram: &[u8], tileset: Tileset, signed_tileset: bool) {
@@ -126,17 +241,8 @@ impl PixelFetcher {
         self.step_dot_clock();
         if self.dot_clock_divider {
             if !self.rendering_sprites {
-                self.tile_index = vram[(self.tile_row_addr + self.tile_row_index) as usize] as i32;
-                if signed_tileset {
-                    self.tile_index = (self.tile_index as i8) as i32 + 256;
-                }
-                if cgb {
-                    self.tile_attributes = TileAttributes(vram[(self.tile_row_addr + self.tile_row_index + 0x2000) as usize]);
-                } else {
-                    self.tile_attributes = TileAttributes::default();
-                }
+                self.tile_data.update_tile_index(vram, signed_tileset, cgb);
             }
-
             self.state = PixelFetcherState::GetTileDataLo;
         }
     }
@@ -179,41 +285,11 @@ impl PixelFetcher {
         if self.rendering_sprites {
             if self.spr_fifo.len() <= 8 {
                 for tile_x in 0..8 {
-                    let sprite_pixel = match tileset {
-                        Tileset::Dmg(tileset) => {
-                            let color = tileset[self.sprite_tile_index as usize].colors[self.sprite_tile_y as usize][if self.current_sprite.x_flip() { tile_x } else { 7 - tile_x }];
-                            SpritePixel {
-                                pixel: TilePixel {
-                                    color,
-                                    palette: self.current_sprite.dmg_palette_number(),
-                                    priority: self.current_sprite.has_priority(),
-                                },
-                                oam_offset: self.current_sprite.oam_offset,
-                            }
-                        },
-                        Tileset::Cgb(tileset0, tileset1) => {
-                            let x = if self.current_sprite.x_flip() { tile_x } else { 7 - tile_x };
-                            let y = self.sprite_tile_y as usize;
-                            let tile = if self.current_sprite.attributes.vram_bank()  {
-                                &tileset1[self.sprite_tile_index as usize]
-                            } else {
-                                &tileset0[self.sprite_tile_index as usize]
-                            };
-                            let color = tile.colors[y][x];
-                            SpritePixel {
-                                pixel: TilePixel {
-                                    color,
-                                    palette: self.current_sprite.cgb_palette_number(),
-                                    priority: self.current_sprite.has_priority(),
-                                },
-                                oam_offset: self.current_sprite.oam_offset,
-                            }
-                        }
-                    };
+                    let sprite_pixel = self.sprite_data.get_sprite_pixel(tile_x, &tileset);
                     if self.spr_fifo.len() <= tile_x {
                         self.spr_fifo.push_back(sprite_pixel);
                     } else if self.spr_fifo[tile_x].pixel.color == 0 ||
-                        (cgb && self.current_sprite.oam_offset < self.spr_fifo[tile_x].oam_offset ) 
+                        (cgb && self.sprite_data.has_priority_over_sprite(self.spr_fifo[tile_x].oam_offset))
                     {
                         self.spr_fifo[tile_x] = sprite_pixel;
                     }
@@ -225,31 +301,11 @@ impl PixelFetcher {
                 let tile_x = 7 - self.scroll_quantity as usize;
                 self.scroll_quantity = 0;
                 for x in (0..=tile_x).rev() {
-                    let pixel = match tileset {
-                        Tileset::Dmg(tileset) => TilePixel {
-                            color: tileset[self.tile_index as usize].colors[self.tile_y as usize][x],
-                            palette: 0,
-                            priority: false,
-                        },
-                        Tileset::Cgb(tileset0, tileset1) => {
-                            let x = if !self.tile_attributes.x_flip() { x } else { 7 - x };
-                            let y = if !self.tile_attributes.y_flip() { self.tile_y } else { 7 - self.tile_y } as usize;
-                            let tile = if self.tile_attributes.bank() {
-                                &tileset1[self.tile_index as usize]
-                            } else {
-                                &tileset0[self.tile_index as usize]
-                            };
-                            TilePixel {
-                                color: tile.colors[y][x],
-                                palette: self.tile_attributes.palette(),
-                                priority: self.tile_attributes.priority(),
-                            }
-                        },
-                    };
+                    let pixel = self.tile_data.get_tile_pixel(&tileset, x);
                     // TODO cgb
                     self.bg_fifo.push_back(pixel);
                 }
-                self.tile_row_index = (self.tile_row_index + 1) & 0x1F;
+                self.tile_data.increment_row_index();
             }
         }
         // self.dot_clock_divider = true;
