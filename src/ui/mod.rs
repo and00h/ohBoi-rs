@@ -156,7 +156,7 @@ impl OhBoiUi {
         let gb_screen_texture = new_texture(GB_SCREEN_WIDTH, GB_SCREEN_HEIGHT, &gl, &mut textures)?;
         
         #[cfg(feature = "debug_ui")]
-        let tile_texture = new_texture(24 * 8, 32 * 8, &gl, &mut textures)?;
+        let tile_texture = new_texture(32 * 8, 24 * 8, &gl, &mut textures)?;
         
         let renderer = Renderer::new(&gl, &mut imgui, &mut textures, false)?;
         let game_window = GameWindow::new(gb_screen_texture);
@@ -227,7 +227,7 @@ impl OhBoiUi {
     }
 
     pub fn audio_callback(&mut self, audio: &[f32]) {
-        self.audio_device.queue(audio);
+        self.audio_device.queue_audio(audio);
     }
     pub fn show(&mut self, gb: &mut GameBoy, text: Option<String>, sample: (&[f32], &[f32], &[f32], &[f32])) -> Result<GameWindowEvent, Box<dyn Error>> {
         let quit = self.process_sdl_events(gb)?;
@@ -246,8 +246,8 @@ impl OhBoiUi {
         cfg_if!{ if #[cfg(feature = "debug_ui")] {
             let hex_view_width = widgets::calc_hex_view_width(ui, 16);
             let rom_pos = [330.0, 20.0];
-            self.rom_window.show(ui, &gb.rom(), rom_pos, Some(0x4000));
             self.tile_window.show(ui);
+            self.rom_window.show(ui, &gb.rom(), rom_pos, Some(0x4000));
             let ext_ram_pos = [330.0, 20.0 + 300.0 + 20.0];
             match gb.ext_ram() {
                 Some(ram) => self.ext_ram_window.show(ui, ram, ext_ram_pos, Some(0x2000)),
@@ -299,8 +299,8 @@ impl OhBoiUi {
                 0,
                 0 as _,
                 0 as _,
-                (24 * 8) as _,
                 (32 * 8) as _,
+                (24 * 8) as _,
                 glow::RGBA as _,
                 glow::UNSIGNED_BYTE,
                 PixelUnpackData::Slice(tiles)

@@ -610,12 +610,42 @@ impl Ppu {
                 let line = y % 8;
                 let pixel = x % 8;
                 let color = tile.colors[line as usize][7 - pixel as usize];
-                let palette =
-                    self.dmg_palettes[dmg_palettes::BG].colors().to_owned();
+                let palette = if self.cgb {
+                    self.cgb_bg_pal.as_ref().unwrap().color_array(color as usize)
+                } else {
+                    self.dmg_palettes[dmg_palettes::BG].colors().to_owned()
+                };
                 res.extend(palette[color as usize].iter());
             }
         }
         
         res
+    }
+    
+    #[cfg(feature = "debug_ui")]
+    pub fn get_tileset1(&self) -> Option<Vec<u8>> {
+        if let Some(ref tileset1) = self.tileset1 {
+            let mut res = Vec::new();
+            for y in 0..(12 * 8) {
+                for x in 0..(32 * 8) {
+                    let tile_y = y / 8;
+                    let tile_x = x / 8;
+                    let tile_offset = tile_y * 12 + tile_x;
+                    let tile = &tileset1[tile_offset];
+                    let line = y % 8;
+                    let pixel = x % 8;
+                    let color = tile.colors[line as usize][7 - pixel as usize];
+                    let palette = if self.cgb {
+                        self.cgb_bg_pal.as_ref().unwrap().color_array(color as usize)
+                    } else {
+                        self.dmg_palettes[dmg_palettes::BG].colors().to_owned()
+                    };
+                    res.extend(palette[color as usize].iter());
+                }
+            }
+            Some(res)
+        } else {
+            None
+        }
     }
 }

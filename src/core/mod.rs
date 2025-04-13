@@ -241,6 +241,9 @@ impl GameBoy {
         let mut tiles = (*self.ppu).borrow().get_tileset0();
         if let Some(t) = (*self.ppu).borrow().get_tileset1() {
             tiles.append(&mut t.to_owned());
+        } else {
+            let mut empty = vec![0u8; tiles.len()];
+            tiles.append(&mut empty)
         }
 
         tiles

@@ -58,6 +58,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             if !rendered && gb.is_in_vblank() {
                 ui.draw_game_screen(&gb.screen());
+                ui.draw_tiles(&gb.tiles());
                 rendered = true;
             }
         }
