@@ -1,8 +1,6 @@
 use std::borrow::BorrowMut;
 use std::cell::RefCell;
-use std::rc::{Rc, Weak};
-use log::{debug, trace};
-use serde::{Serialize, Deserialize};
+use std::rc::Rc;
 use crate::core::interrupts::{Interrupt, InterruptController};
 
 mod key_masks {

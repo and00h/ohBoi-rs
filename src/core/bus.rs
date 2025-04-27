@@ -5,11 +5,11 @@ use log::{debug, trace, warn};
 use crate::core::audio::Apu;
 use crate::core::cpu::{Cpu, Speed};
 use crate::core::ppu::Ppu;
-use crate::core::interrupts::{Interrupt, InterruptController};
+use crate::core::interrupts::InterruptController;
 use crate::core::joypad::Joypad;
 use crate::core::memory::cartridge::Cartridge;
 use crate::core::timers::Timer;
-use crate::core::memory::dma::{DmaController, DmaState, HdmaController};
+use crate::core::memory::dma::{DmaController, HdmaController};
 use crate::core::memory::WRAM;
 
 pub(crate) struct BusController(Weak<RefCell<Bus>>);
@@ -175,11 +175,14 @@ impl Bus {
             0xFF4D => {
                 unsafe {
                     let cpu = self.cpu.as_ref().unwrap().as_ptr();
-                    let res = if matches!((*cpu).speed(), Speed::Double) {
+                    let mut res = if matches!((*cpu).speed(), Speed::Double) {
                         0x80
                     } else {
                         0x00
-                    } | if (*cpu).is_speed_switching() { 1 } else { 0 }; 
+                    };
+                    if (*cpu).is_speed_switching() { 
+                        res |= 1; 
+                    } 
                     res
                 }
             }, 
@@ -207,7 +210,6 @@ impl Bus {
                 0xFF00..=0xFF7F => self.read_io(addr),
                 0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80],
                 0xFFFF => (*self.interrupts).borrow().get_interrupt_enable(),
-                _ => unreachable!()
             }
         } else {
             0xFF
@@ -225,7 +227,6 @@ impl Bus {
                 0xFF00..=0xFF7F => self.write_io(addr, val),
                 0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80] = val,
                 0xFFFF => (*self.interrupts).borrow_mut().set_interrupt_enable(val),
-                _ => unimplemented!()
             }
         }
     }
@@ -240,7 +241,6 @@ impl Bus {
             0xFF00..=0xFF7F => self.read_io(addr),
             0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80],
             0xFFFF => (*self.interrupts).borrow().get_interrupt_enable(),
-            _ => unimplemented!()
         }
     }
 
@@ -254,7 +254,6 @@ impl Bus {
             0xFF00..=0xFF7F => self.write_io(addr, val),
             0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80] = val,
             0xFFFF => (*self.interrupts).borrow_mut().set_interrupt_enable(val),
-            _ => unimplemented!()
         }
     }
     

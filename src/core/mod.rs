@@ -11,7 +11,6 @@ use crate::core::joypad::{Joypad, Key};
 use crate::core::memory::cartridge::Cartridge;
 use crate::core::memory::dma::{DmaController, HdmaController, HdmaState};
 use crate::core::timers::Timer;
-use crate::core::utils::Counter;
 
 macro_rules! rc_cell {
     ($s:ty) => {

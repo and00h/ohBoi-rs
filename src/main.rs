@@ -5,8 +5,6 @@ mod ui;
 
 use std::collections::VecDeque;
 use std::error::Error;
-use std::fs::File;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -34,7 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let current_time = std::time::Instant::now();
         let mut fps = String::from("0.0");
         let mut rendered = false;
-        let mut speed = 1;
+        let speed = 1;
         while gb.cycle_counter() < 4194304 / 60 * speed && gb.is_running() {
             gb.clock();
             match gb.audio_output() {

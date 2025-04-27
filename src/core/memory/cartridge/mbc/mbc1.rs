@@ -49,7 +49,7 @@ impl Mbc for Mbc1 {
     fn write(&mut self, addr: u16, val: u8) {
         let val = val as usize;
         match addr {
-            0..=0x1FFF => self.ram_enabled = (val & 0xF == 0xA),
+            0..=0x1FFF => self.ram_enabled = val & 0xF == 0xA,
             0x2000..=0x3FFF => self.rom_bank_lo = if val & 0x1F == 0 { 1 } else { val & 0x1F },
             0x4000..=0x5FFF => self.rom_bank_hi = val & 0x3,
             0x6000..=0x7FFF if val == 0 => self.banking_mode = BankingMode::RAM,

@@ -1,9 +1,9 @@
 #![cfg(feature = "debug_ui")]
 
-use std::cmp::{max, max_by, min};
+use std::cmp::{max_by, min};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use imgui::{Condition, StyleColor, StyleVar, Ui, WindowFlags};
+use imgui::{Condition, StyleColor, Ui};
 use crate::core::cpu::Register16;
 use crate::core::GameBoy;
 use crate::logging::ImguiLogString;

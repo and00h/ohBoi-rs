@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use crate::core::ppu::{Sprite, SpritePixel, Tile, TileAttributes, TilePixel, Tileset};
+use crate::core::ppu::{Sprite, SpritePixel, TileAttributes, TilePixel, Tileset};
 
 enum PixelFetcherState {
     GetTile,

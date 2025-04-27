@@ -1,15 +1,15 @@
 mod instructions;
 mod prefixed_insts;
 
-use std::cell::{Ref, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::vec_deque::VecDeque;
 use std::fmt::{Debug, Formatter};
 use std::ops::{Index, IndexMut};
-use std::rc::{Rc, Weak};
-use log::{debug, error, info, trace, warn};
+use std::rc::Rc;
+use log::{debug, trace, warn};
 use strfmt::strfmt;
-use crate::core::bus::{Bus, BusController};
+use crate::core::bus::BusController;
 use crate::core::interrupts::{Interrupt, InterruptController};
 
 #[derive(Clone, Copy, Hash, Ord, PartialOrd, Eq, PartialEq)]
@@ -59,7 +59,7 @@ pub(crate) struct Registers {
 use Register8::*;
 use Register16::*;
 use crate::core::cpu::CpuState::HdmaHalted;
-use crate::core::cpu::instructions::{InstArg, INSTRUCTIONS, InstructionType, MNEMONICS, NARGS};
+use crate::core::cpu::instructions::{InstArg, INSTRUCTIONS, MNEMONICS, NARGS};
 use crate::core::cpu::prefixed_insts::{PREFIXED_INSTS, PREFIXED_MNEMONICS};
 
 impl Registers {
@@ -281,7 +281,7 @@ impl Cpu {
         self.speed = Speed::Normal;
         self.speed_switch_armed = false;
         self.cycles = 0;
-
+        self.registers.reset();
         (*self.interrupt_controller).borrow_mut().reset();
         
         #[cfg(feature = "debug_ui")] {
@@ -597,7 +597,7 @@ impl Cpu {
             match self.state {
                 CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(HL)),
                 CpuState::ReadMemory(addr) => {
-                    let mut data = self.bus.read(addr).wrapping_sub(1);
+                    let data = self.bus.read(addr).wrapping_sub(1);
                     CpuState::WriteMemory(addr, data)
                 },
                 CpuState::WriteMemory(addr, data) => {

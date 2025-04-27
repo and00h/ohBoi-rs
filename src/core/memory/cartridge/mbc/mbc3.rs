@@ -1,7 +1,7 @@
 use bitfield::bitfield;
-use log::{debug, info, warn};
+use log::warn;
 use crate::core::memory::cartridge::CartridgeHeader;
-use crate::core::memory::cartridge::mbc::{BankingMode, RAM_BANK_SIZE, ROM_BANK_SIZE};
+use crate::core::memory::cartridge::mbc::{RAM_BANK_SIZE, ROM_BANK_SIZE};
 use super::Mbc;
 use std::time::SystemTime;
 

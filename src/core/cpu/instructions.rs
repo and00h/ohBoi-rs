@@ -1,20 +1,8 @@
-use log::{debug, warn};
+use log::debug;
 use crate::core::cpu::{CpuFlag, Register16, Register8};
 use crate::core::cpu::Cpu;
 use Register16::*;
 use Register8::*;
-
-type NoArgOp = fn(&mut Cpu);
-type OneArgOp = fn(&mut Cpu, u8);
-type TwoArgOp = fn(&mut Cpu, u16);
-
-pub(super) enum InstructionType {
-    NoArgs(NoArgOp),
-    OneArg(OneArgOp),
-    TwoArgs(TwoArgOp),
-}
-
-use InstructionType::{NoArgs, OneArg, TwoArgs};
 
 use super::CpuState;
 
@@ -277,7 +265,7 @@ pub static NARGS: [usize; 256] = [
     0    // 0xFF
 ];
 
-pub const MNEMONICS: &'static [&'static str; 256] = &[
+pub const MNEMONICS: &[&str; 256] = &[
     "NOP",                    // 0x00
     "LD BC, {arg16}",        // 0x01
     "LD (BC), A",            // 0x02
@@ -575,24 +563,6 @@ impl InstArg {
             },
             Self::None => panic!("InstArg::lo() called on a None value!")
         }
-    }
-}
-
-struct Inst<F: FnMut(&mut Cpu)> {
-    inst_type: InstructionType,
-    transition_func: Box<F>
-}
-
-impl<F: FnMut(&mut Cpu)> Inst<F> {
-    pub fn new(inst_type: InstructionType, transition_func: F) -> Self {
-        Inst {
-            inst_type,
-            transition_func: Box::new(transition_func),
-        }
-    }
-
-    pub fn advance(&mut self, cpu: &mut Cpu) {
-        (*self.transition_func)(cpu);
     }
 }
 

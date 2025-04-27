@@ -1,5 +1,4 @@
 use std::mem::transmute;
-use log::debug;
 use crate::core::bus::BusController;
 use crate::core::ppu::PpuState;
 

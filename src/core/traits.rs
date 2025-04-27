@@ -1,4 +1,3 @@
-use std::ops::Index;
 
 trait AddressSpace {
     fn read(&self, addr: u16) -> u8;

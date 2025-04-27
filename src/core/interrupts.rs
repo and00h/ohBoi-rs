@@ -1,4 +1,4 @@
-use log::{debug, trace};
+use log::trace;
 use serde::{Serialize, Deserialize};
 
 const INITIAL_INTERRUPT_REQUEST: u8 = 0b11100001;
@@ -21,9 +21,19 @@ pub struct InterruptController {
     int_enable: u8
 }
 
+impl Default for InterruptController {
+    fn default() -> Self {
+        Self {
+            ime: false,
+            int_request: INITIAL_INTERRUPT_REQUEST,
+            int_enable: 0
+        }
+    }
+}
+
 impl InterruptController {
     pub fn new() -> Self {
-        InterruptController { ime: false, int_request: INITIAL_INTERRUPT_REQUEST, int_enable: 0 }
+        Self::default()
     }
 
     pub fn reset(&mut self) {

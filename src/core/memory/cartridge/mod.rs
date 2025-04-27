@@ -1,11 +1,9 @@
 mod mbc;
 
-use std::cell::RefCell;
 use std::fs::File;
 use std::path::PathBuf;
 use std::io::{Read, Result, Write};
-use std::ops::{Index, IndexMut};
-use std::rc::Rc;
+use std::ops::Index;
 use std::slice::SliceIndex;
 use log::warn;
 use crate::core::memory::cartridge::mbc::{make_mbc, Mbc};

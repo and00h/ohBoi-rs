@@ -62,7 +62,7 @@ impl Envelope {
             self.counter.reset();
             self.counter.limit = match nr22.sweep_pace() as u32 {
                 0 => 8,
-                val @ _ => val
+                val => val
             };
             if self.running && nr22.sweep_pace() > 0 {
                 if nr22.direction() {
@@ -70,9 +70,7 @@ impl Envelope {
                         volume += 1;
                     }
                 } else {
-                    if volume > 0 {
-                        volume -= 1;
-                    }
+                    volume = volume.saturating_sub(1);
                 }
             }
             self.running = volume > 0 && volume < 15;
@@ -278,7 +276,7 @@ impl Square1 {
     }
 
     pub fn output(&self) -> u8 {
-        self.output as u8
+        self.output
     }
 
     pub fn reset_counters(&mut self) {
@@ -416,7 +414,7 @@ impl Square2 {
     }
 
     pub fn output(&self) -> u8 {
-        self.output as u8
+        self.output
     }
 
     pub fn reset_counters(&mut self) {
@@ -435,10 +433,8 @@ pub struct WaveChannel {
     length_timer: Counter,
     freq_counter: Counter,
     pos: usize,
-    volume: u8,
     output: u8,
     enabled: bool,
-    dac_enabled: bool,
     wave_ram: [u8; 0x10]
 }
 
@@ -453,10 +449,8 @@ impl WaveChannel {
             length_timer: Counter::new(64, 2),
             freq_counter: Counter::new(0, 1),
             pos: 0,
-            volume: 0,
             output: 0,
             enabled: false,
-            dac_enabled: false,
             wave_ram: [0; 0x10]
         }
     }
@@ -512,13 +506,13 @@ impl WaveChannel {
     }
 
     pub fn write_wave_ram(&mut self, index: usize, val: u8) {
-        if !self.enabled || (self.enabled && index == self.pos) {
+        if !self.enabled || index == self.pos {
             self.wave_ram[index] = val;
         }
     }
 
     pub fn read_wave_ram(&self, index: usize) -> u8 {
-        if !self.enabled || (self.enabled && index == self.pos) {
+        if !self.enabled || index == self.pos {
             self.wave_ram[index]
         } else {
             0xFF
@@ -526,7 +520,7 @@ impl WaveChannel {
     }
 
     pub fn output(&self) -> u8 {
-        self.output as u8
+        self.output
     }
 
     pub fn reset_counters(&mut self) {
@@ -719,7 +713,7 @@ impl Noise {
     }
 
     pub fn output(&self) -> u8 {
-        self.output as u8
+        self.output
     }
 
     pub fn reset_counters(&mut self) {

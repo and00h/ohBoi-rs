@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use fern::colors::{Color, ColoredLevelConfig, WithFgColor};
-use regex::{Regex, RegexBuilder};
+use fern::colors::{Color, ColoredLevelConfig};
 
 pub struct ImguiLogString {
     pub text: String,

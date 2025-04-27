@@ -180,8 +180,7 @@ fn res(bit: usize, val: u8) -> u8 {
 }
 
 fn set(bit: usize, val: u8) -> u8 {
-    let res = val | (1 << bit);
-    res
+    val | (1 << bit)
 }
 
 fn bit(cpu: &mut Cpu, bit: usize, val: u8) {
@@ -215,7 +214,6 @@ fn bit_reg(cpu: &mut Cpu, n: usize, reg: Register8) -> CpuState {
         }
 }
 
-use Register::*;
 
 pub(super) static PREFIXED_INSTS: [PrefixedInstruction; 0x100] = [
     |cpu| op_reg(rlc, cpu, B),

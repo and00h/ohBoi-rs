@@ -5,7 +5,6 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use cfg_if::cfg_if;
-use fern::Output;
 
 use imgui_glow_renderer::glow::{NativeTexture, PixelUnpackData};
 use imgui::{Condition, StyleVar, TextureId, Textures, Ui};

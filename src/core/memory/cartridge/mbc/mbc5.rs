@@ -1,6 +1,6 @@
-use log::{debug, info, warn};
+use log::debug;
 use crate::core::memory::cartridge::CartridgeHeader;
-use crate::core::memory::cartridge::mbc::{BankingMode, RAM_BANK_SIZE, ROM_BANK_SIZE};
+use crate::core::memory::cartridge::mbc::{RAM_BANK_SIZE, ROM_BANK_SIZE};
 use super::Mbc;
 
 pub(super) struct Mbc5 {
@@ -49,7 +49,7 @@ impl Mbc for Mbc5 {
     fn write(&mut self, addr: u16, val: u8) {
         let val = val as usize;
         match addr {
-            0..=0x1FFF => self.ram_enabled = (val & 0xF == 0xA),
+            0..=0x1FFF => self.ram_enabled = val & 0xF == 0xA,
             0x2000..=0x2FFF => self.rom_bank_lo = val,
             0x3000..=0x3FFF => self.rom_bank_hi = val & 0x1,
             0x4000..=0x5FFF => self.ram_bank = val & 0xF,

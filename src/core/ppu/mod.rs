@@ -4,7 +4,7 @@ mod palettes;
 use std::cell::RefCell;
 use std::rc::Rc;
 use bitfield::bitfield;
-use log::{info, trace, warn};
+use log::{trace, warn};
 use fifo::PixelFetcher;
 use palettes::DmgPalette;
 use crate::core::interrupts::{Interrupt, InterruptController};

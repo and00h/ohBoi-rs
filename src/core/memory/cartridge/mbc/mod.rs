@@ -1,5 +1,5 @@
 use log::warn;
-use crate::core::memory::cartridge::{Cartridge, CartridgeHeader, CartridgeType};
+use crate::core::memory::cartridge::{CartridgeHeader, CartridgeType};
 
 pub(super) mod none;
 pub(super) mod mbc1;
