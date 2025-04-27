@@ -429,7 +429,7 @@ impl Ppu {
     fn hblank(&mut self) {
         self.advance_scanline();
         if self.ly == 144 {
-            (*self.interrupt_controller).borrow_mut().raise(Interrupt::VBLANK);
+            (*self.interrupt_controller).borrow_mut().raise(Interrupt::Vblank);
             self.update_state(PpuState::VBlank);
         } else {
             self.update_state(PpuState::OAMSearch)

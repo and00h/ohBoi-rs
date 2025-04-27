@@ -175,7 +175,7 @@ pub(crate) static INTERRUPT_VECTORS: [(Interrupt, u16); 5] = [
     (Interrupt::SERIAL, 0x58),
     (Interrupt::TIMER, 0x50),
     (Interrupt::LCD, 0x48),
-    (Interrupt::VBLANK, 0x40),
+    (Interrupt::Vblank, 0x40),
 ];
 
 #[derive(Debug, Copy, Clone, PartialEq)]

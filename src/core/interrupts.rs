@@ -7,7 +7,7 @@ const INTERRUPT_REQUEST_MASK: u8 = 0b00011111;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
 pub enum Interrupt {
-    VBLANK  = 0b00000001,
+    Vblank  = 0b00000001,
     LCD     = 0b00000010,
     TIMER   = 0b00000100,
     SERIAL  = 0b00001000,
