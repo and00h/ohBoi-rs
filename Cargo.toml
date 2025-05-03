@@ -5,3 +5,4 @@ members = ["ohboi-core", "ohboi-sdl"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+license-file = "LICENSE"
