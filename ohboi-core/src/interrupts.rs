@@ -1,7 +1,6 @@
 // Copyright Antonio Porsia 2025. Licensed under the EUPL-1.2 or later.
 
 use log::trace;
-use serde::{Serialize, Deserialize};
 
 const INITIAL_INTERRUPT_REQUEST: u8 = 0b11100001;
 const INTERRUPT_REQUEST_MASK: u8 = 0b00011111;
@@ -16,7 +15,6 @@ pub enum Interrupt {
     Joypad = 0b00010000
 }
 
-#[derive(Serialize, Deserialize)]
 pub struct InterruptController {
     pub ime: bool,
     int_request: u8,

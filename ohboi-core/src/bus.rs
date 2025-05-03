@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::panic::Location;
 use std::rc::{Rc, Weak};
-use log::{debug, trace, warn};
+use log::{trace, warn};
 use crate::audio::Apu;
 use crate::cpu::{Cpu, Speed};
 use crate::ppu::Ppu;
@@ -46,20 +46,6 @@ impl BusController {
     pub fn dma_write(&mut self, addr: u16, val: u8) {
         if let Some(b) = self.0.upgrade() {
             (*b).borrow_mut().dma_write(addr, val);
-        }
-    }
-    
-    pub fn hdma_halt_cpu(&mut self) {
-        debug!("HDMA halt requested");
-        if let Some(b) = self.0.upgrade() {
-            (*b).borrow_mut().hdma_halt_cpu();
-        }
-    }
-    
-    pub fn hdma_restart_cpu(&mut self) {
-        debug!("HDMA restart requested");
-        if let Some(b) = self.0.upgrade() {
-            (*b).borrow_mut().hdma_continue();
         }
     }
 }
@@ -212,7 +198,6 @@ impl Bus {
                 0xFF00..=0xFF7F => self.read_io(addr),
                 0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80],
                 0xFFFF => (*self.interrupts).borrow().get_interrupt_enable(),
-                _ => unreachable!()
             }
         } else {
             0xFF
@@ -230,7 +215,6 @@ impl Bus {
                 0xFF00..=0xFF7F => self.write_io(addr, val),
                 0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80] = val,
                 0xFFFF => (*self.interrupts).borrow_mut().set_interrupt_enable(val),
-                _ => unreachable!()
             }
         }
     }
@@ -245,7 +229,6 @@ impl Bus {
             0xFF00..=0xFF7F => self.read_io(addr),
             0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80],
             0xFFFF => (*self.interrupts).borrow().get_interrupt_enable(),
-            _ => unreachable!()
         }
     }
 
@@ -259,15 +242,6 @@ impl Bus {
             0xFF00..=0xFF7F => self.write_io(addr, val),
             0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80] = val,
             0xFFFF => (*self.interrupts).borrow_mut().set_interrupt_enable(val),
-            _ => unreachable!()
         }
-    }
-    
-    pub fn hdma_halt_cpu(&mut self) {
-        self.cpu.as_ref().unwrap().borrow_mut().hdma_halt();
-    }
-    
-    pub fn hdma_continue(&mut self) {
-        self.cpu.as_ref().unwrap().borrow_mut().hdma_continue();
     }
 }

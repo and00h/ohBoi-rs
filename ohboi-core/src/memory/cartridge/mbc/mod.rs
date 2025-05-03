@@ -13,27 +13,14 @@ pub(crate) use mbc1::Mbc1;
 pub(crate) use mbc3::Mbc3;
 pub(crate) use mbc5::Mbc5;
 
+#[allow(clippy::upper_case_acronyms)]
 enum BankingMode {
     ROM,
     RAM
 }
 
-const RAM_SIZE_MAP: [usize; 6] = [
-    0, 2048, 8192, 32768, 131072, 65535
-];
-
 const ROM_BANK_SIZE: usize = 0x4000;
 const RAM_BANK_SIZE: usize = 0x2000;
-
-fn calc_rom_size(header_rom_size: usize) -> usize {
-    match header_rom_size {
-        0..=8 => 0x8000 << header_rom_size,
-        0x52 => 72 * ROM_BANK_SIZE,
-        0x53 => 80 * ROM_BANK_SIZE,
-        0x54 => 96 * ROM_BANK_SIZE,
-        _ => panic!("Invalid ROM size in cartridge header: {:02X}", header_rom_size)
-    }
-}
 
 pub(crate) trait Mbc {
     fn read(&self, addr: u16) -> u8;
@@ -53,28 +40,29 @@ pub(crate) trait Mbc {
 }
 
 pub(super) fn make_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) -> Box<dyn Mbc> {
+    #[allow(unreachable_patterns)] 
     match header.cart_type {
         CartridgeType::None => Box::new(None::new(rom)),
-        CartridgeType::MBC1 =>
+        CartridgeType::Mbc1 =>
             Box::new(Mbc1::new(rom, header, None, false)),
-        CartridgeType::MBC1_RAM =>
+        CartridgeType::Mbc1Ram =>
             Box::new(Mbc1::new(rom, header, ram, false)),
-        CartridgeType::MBC1_RAM_BATTERY => Box::new(mbc1::Mbc1::new(rom, header, ram, true)),
-        CartridgeType::MBC3_TIMER_BATTERY =>
+        CartridgeType::Mbc1RamBattery => Box::new(mbc1::Mbc1::new(rom, header, ram, true)),
+        CartridgeType::Mbc3TimerBattery =>
             Box::new(Mbc3::new(rom, header, None, true, true)),
-        CartridgeType::MBC3_TIMER_RAM_BATTERY =>
+        CartridgeType::Mbc3TimerRamBattery =>
             Box::new(Mbc3::new(rom, header, ram, true, true)),
-        CartridgeType::MBC3 =>
+        CartridgeType::Mbc3 =>
             Box::new(Mbc3::new(rom, header, None, false, false)),
-        CartridgeType::MBC3_RAM =>
+        CartridgeType::Mbc3Ram =>
             Box::new(Mbc3::new(rom, header, ram, false, false)),
-        CartridgeType::MBC3_RAM_BATTERY =>
+        CartridgeType::Mbc3RamBattery =>
             Box::new(Mbc3::new(rom, header, ram, true, false)),
-        CartridgeType::MBC5 =>
+        CartridgeType::Mbc5 =>
             Box::new(Mbc5::new(rom, header, None, false)),
-        CartridgeType::MBC5_RAM =>
+        CartridgeType::Mbc5Ram =>
             Box::new(Mbc5::new(rom, header, ram, false)),
-        CartridgeType::MBC5_RAM_BATTERY => Box::new(Mbc5::new(rom, header, ram, true)),
+        CartridgeType::Mbc5RamBattery => Box::new(Mbc5::new(rom, header, ram, true)),
         t => {
             warn!("Unimplemented cartridge type {:?}. Falling back to None", t);
             Box::new(None::new(rom))

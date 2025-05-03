@@ -65,7 +65,6 @@ pub(crate) enum CpuState {
     ReadArg,
     ReadArgLo,
     ReadArgHi(u8),
-    ALU16ReadHi,
     ALU16WriteHi(bool),
     ALU16AddSPSignedLo(u8),
     ALU16AddSPSignedHi(u8),
@@ -119,7 +118,7 @@ pub(crate) struct Cpu {
 
     cycles: u64,
     elapsed: u64,
-    cgb: bool,
+    _cgb: bool,
     speed_switch_armed: bool,
     #[cfg(feature = "debugging")]
     current_inst_pc: u16
@@ -141,7 +140,7 @@ impl Cpu {
             speed: Speed::Normal,
             cycles: 0,
             elapsed: 0,
-            cgb,
+            _cgb: cgb,
             speed_switch_armed: false,
             #[cfg(feature = "debugging")]
             current_inst_pc: 0x0100
@@ -487,22 +486,22 @@ impl Cpu {
             }
     }
 
-    fn store_hl_immediate(&mut self) {
-        self.state =
-            match self.state {
-                CpuState::StartedExecution => CpuState::ReadArg,
-                CpuState::ReadArg => {
-                    let data = self.bus.read(self.pc);
-                    self.pc += 1;
-                    CpuState::WriteMemory(self.registers.get_reg16(HL), data)
-                },
-                CpuState::WriteMemory(addr, data) => {
-                    self.bus.write(addr, data);
-                    CpuState::FinishedExecution
-                },
-                _ => unreachable!()
-            }
-    }
+    // fn store_hl_immediate(&mut self) {
+    //     self.state =
+    //         match self.state {
+    //             CpuState::StartedExecution => CpuState::ReadArg,
+    //             CpuState::ReadArg => {
+    //                 let data = self.bus.read(self.pc);
+    //                 self.pc += 1;
+    //                 CpuState::WriteMemory(self.registers.get_reg16(HL), data)
+    //             },
+    //             CpuState::WriteMemory(addr, data) => {
+    //                 self.bus.write(addr, data);
+    //                 CpuState::FinishedExecution
+    //             },
+    //             _ => unreachable!()
+    //         }
+    // }
 
     fn store_indirect(&mut self, reg: Register16) {
         self.state =
@@ -962,7 +961,7 @@ impl Cpu {
         self.jump(condition);
     }
 
-    fn ret(&mut self, condition: bool) {
+    fn ret(&mut self) {
         self.state =
             match self.state {
                 CpuState::StartedExecution => CpuState::ReadMemoryLo(self.sp),
@@ -995,12 +994,12 @@ impl Cpu {
                     CpuState::FinishedExecution
                 }
             },
-            _ => self.ret(condition)
+            _ => self.ret()
         }
     }
 
     fn reti(&mut self) {
-        self.ret(true);
+        self.ret();
         if let CpuState::FinishedExecution = self.state {
             (*self.interrupt_controller).borrow_mut().ime = true;
         }
@@ -1292,7 +1291,7 @@ impl Cpu {
             }
     }
 
-    fn load_indirect(&mut self, reg: Register8, src: Register16) {
+    fn load_indirect(&mut self, src: Register16) {
         self.state =
         match self.state {
             CpuState::StartedExecution => CpuState::ReadMemory(self.registers.get_reg16(src)),

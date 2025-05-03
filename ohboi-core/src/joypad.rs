@@ -97,7 +97,6 @@ impl Joypad {
     }
 
     pub fn select_key_group(&mut self, val: u8) {
-        let key_groups = val & key_masks::KEY_GROUPS;
         self.key_select = (val & 0xF0) | 0xC0;
     }
 

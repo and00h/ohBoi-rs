@@ -16,31 +16,31 @@ pub enum CartridgeType {
     /// No cartridge.
     None = 0x00,
     /// Memory Bank Controller 1 (MBC1).
-    MBC1 = 0x01,
+    Mbc1 = 0x01,
     /// MBC1 with RAM.
-    MBC1_RAM = 0x02,
+    Mbc1Ram = 0x02,
     /// MBC1 with RAM and battery backup.
-    MBC1_RAM_BATTERY = 0x03,
+    Mbc1RamBattery = 0x03,
     /// Memory Bank Controller 3 (MBC3).
     /// This includes RTC support.
-    MBC3_TIMER_BATTERY = 0x0F,
+    Mbc3TimerBattery = 0x0F,
     /// MBC3 with RAM.
     /// This includes RTC support.
-    MBC3_TIMER_RAM_BATTERY = 0x10,
+    Mbc3TimerRamBattery = 0x10,
     /// MBC3 without RAM and RTC.
-    MBC3 = 0x11,
+    Mbc3 = 0x11,
     /// MBC3 with RAM.
     /// Without RTC.
-    MBC3_RAM = 0x12,
+    Mbc3Ram = 0x12,
     /// MBC3 with RAM and battery backup.
     /// Without RTC.
-    MBC3_RAM_BATTERY = 0x13,
+    Mbc3RamBattery = 0x13,
     /// Memory Bank Controller 5 (MBC5).
-    MBC5 = 0x19,
+    Mbc5 = 0x19,
     /// MBC5 with RAM.
-    MBC5_RAM = 0x1A,
+    Mbc5Ram = 0x1A,
     /// MBC5 with RAM and battery backup.
-    MBC5_RAM_BATTERY = 0x1B,
+    Mbc5RamBattery = 0x1B,
 }
 
 impl From<u8> for CartridgeType {
@@ -56,17 +56,17 @@ impl From<u8> for CartridgeType {
     fn from(value: u8) -> Self {
         match value {
             0x00 => Self::None,
-            0x01 => Self::MBC1,
-            0x02 => Self::MBC1_RAM,
-            0x03 => Self::MBC1_RAM_BATTERY,
-            0x0F => Self::MBC3_TIMER_BATTERY,
-            0x10 => Self::MBC3_TIMER_RAM_BATTERY,
-            0x11 => Self::MBC3,
-            0x12 => Self::MBC3_RAM,
-            0x13 => Self::MBC3_RAM_BATTERY,
-            0x19 => Self::MBC5,
-            0x1A => Self::MBC5_RAM,
-            0x1B => Self::MBC5_RAM_BATTERY,
+            0x01 => Self::Mbc1,
+            0x02 => Self::Mbc1Ram,
+            0x03 => Self::Mbc1RamBattery,
+            0x0F => Self::Mbc3TimerBattery,
+            0x10 => Self::Mbc3TimerRamBattery,
+            0x11 => Self::Mbc3,
+            0x12 => Self::Mbc3Ram,
+            0x13 => Self::Mbc3RamBattery,
+            0x19 => Self::Mbc5,
+            0x1A => Self::Mbc5Ram,
+            0x1B => Self::Mbc5RamBattery,
             _ => {
                 warn!("Unknown cartridge type 0x{:x}. Falling back to None", value);
                 Self::None
@@ -78,6 +78,7 @@ impl From<u8> for CartridgeType {
 /// Represents the header of a Game Boy cartridge.
 ///
 /// The header contains metadata about the cartridge, such as its title, type, and memory sizes.
+#[allow(unused)]
 struct CartridgeHeader {
     /// The entry point of the cartridge.
     entry_point: Vec<u8>,
@@ -172,6 +173,7 @@ impl CartridgeHeader {
 /// This structure manages the ROM, RAM, and memory bank controller (MBC) for the cartridge.
 pub struct Cartridge {
     /// The path to the ROM file.
+    #[allow(unused)]
     rom_path: PathBuf,
     /// The path to the save file.
     sav_path: PathBuf,

@@ -4,16 +4,18 @@ use std::cell::RefCell;
 use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
-use cfg_if::cfg_if;
 use crate::audio::{Apu};
 use crate::bus::Bus;
-use crate::cpu::{Cpu, Registers, Speed};
+use crate::cpu::{Cpu, Speed};
 use crate::ppu::{Ppu, PpuState};
 use crate::interrupts::InterruptController;
 use crate::joypad::{Joypad, Key};
 use crate::memory::cartridge::Cartridge;
 use crate::memory::dma::{DmaController, HdmaController, HdmaState};
 use crate::timers::Timer;
+
+#[cfg(feature = "debugging")]
+use crate::cpu::Registers;
 
 macro_rules! rc_cell {
     ($s:ty) => {
@@ -38,7 +40,6 @@ pub struct GameBoy {
     timer: Rc<RefCell<Timer>>,
     cartridge: Rc<RefCell<Cartridge>>,
     cycle_counter: u64,
-    enable_audio_channels: (bool, bool, bool, bool),
     stopped: bool,
 }
 
@@ -74,7 +75,7 @@ impl GameBoy {
                 b.set_hdma_controller(Rc::clone(hdma_controller.as_ref().unwrap()));
             }
         }
-        Ok(Self { joypad, bus, cpu, ppu, apu, dma, hdma_controller, timer, cartridge: Rc::clone(&cartridge), cycle_counter: 0, enable_audio_channels: (true, true, true, true), stopped: false })
+        Ok(Self { joypad, bus, cpu, ppu, apu, dma, hdma_controller, timer, cartridge: Rc::clone(&cartridge), cycle_counter: 0, stopped: false })
     }
 
     pub fn clock(&mut self) {

@@ -335,12 +335,8 @@ version = "0.1.0"
 dependencies = [
  "bitfield",
  "cfg-if",
- "clap",
  "fern",
  "log",
- "once_cell",
- "serde",
- "serde_json",
  "strfmt",
 ]
 
