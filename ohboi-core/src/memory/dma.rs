@@ -278,7 +278,7 @@ impl HdmaController {
     }
 
     /// Performs a block of HDMA transfer.
-    fn transfer(&mut self) {
+    fn transfer_block(&mut self) {
         for _ in 0..8 {
             let dst = self.hdma_dest + self.hdma_index;
             if self.hdma_index == self.hdma_len || dst >= 0xA000 {
@@ -309,7 +309,7 @@ impl HdmaController {
                 }
             }
             HdmaState::HBlankTransfer => {
-                self.transfer();
+                self.transfer_block();
                 if self.hdma_index % 0x10 == 0 {
                     self.hdma5 = (((self.hdma_len - self.hdma_index) >> 4) as u8).wrapping_sub(1);
                     if self.hdma5 == 0xFF {
@@ -330,7 +330,7 @@ impl HdmaController {
                 // TODO: fix HDMA/GDMA transfer, this is horrible and absolutely not cycle accurate
                 // (but it works for now)
                 loop {
-                    self.transfer();
+                    self.transfer_block();
                     if self.hdma_index == self.hdma_len || self.hdma_dest + self.hdma_index >= 0xA000 {
                         self.hdma_active = false;
                         self.hdma5 = 0xFF;

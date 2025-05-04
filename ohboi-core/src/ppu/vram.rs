@@ -4,7 +4,7 @@ use std::ops::{Index, IndexMut};
 use std::slice::SliceIndex;
 use bitfield::bitfield;
 
-macro_rules! tileid_to_address {
+macro_rules! tileidx_to_address {
     ($tileid:expr, $signed:expr, $bank:expr) => {
         if !$signed {
             ($tileid as usize) * 16 + $bank * 0x2000
@@ -71,6 +71,7 @@ pub struct Vram {
     vram: [u8; 0x4000],
     /// The currently active VRAM bank (0 or 1).
     vram_bank: usize,
+    signed_addressing: bool,
     cgb: bool,
 }
 
@@ -83,6 +84,7 @@ impl Vram {
         Self {
             vram: [0; 0x4000],
             vram_bank: 0,
+            signed_addressing: false,
             cgb,
         }
     }
@@ -123,15 +125,15 @@ impl Vram {
     
     pub fn get_tile(&self, tile_map_index: u16, signed: bool) -> (Tile, TileAttributes) {
         let attr = if self.cgb { TileAttributes(self.vram[tile_map_index as usize + 0x2000]) } else { TileAttributes(0) };
-        let tile_id = self.vram[tile_map_index as usize];
-        let tile_address = tileid_to_address!(tile_id, signed, attr.bank() as usize);
+        let tile_idx = self.vram[tile_map_index as usize];
+        let tile_address = tileidx_to_address!(tile_idx, signed, attr.bank() as usize);
         let tile_data = &self.vram[tile_address..tile_address + 16];
         let tile = Tile::from(tile_data);
         (tile, attr)
     }
     
-    pub fn get_sprite_tile(&self, sprite_tile_location: u8, bank: usize) -> Tile {
-        let tile_address = tileid_to_address!(sprite_tile_location, false, bank);
+    pub fn get_sprite_tile(&self, sprite_tile_idx: u8, bank: usize) -> Tile {
+        let tile_address = tileidx_to_address!(sprite_tile_idx, false, bank);
         let tile_data = &self.vram[tile_address..tile_address + 16];
         Tile::from(tile_data)
     }

@@ -489,23 +489,6 @@ impl Cpu {
             }
     }
 
-    // fn store_hl_immediate(&mut self) {
-    //     self.state =
-    //         match self.state {
-    //             CpuState::StartedExecution => CpuState::ReadArg,
-    //             CpuState::ReadArg => {
-    //                 let data = self.bus.read(self.pc);
-    //                 self.pc += 1;
-    //                 CpuState::WriteMemory(self.registers.get_reg16(HL), data)
-    //             },
-    //             CpuState::WriteMemory(addr, data) => {
-    //                 self.bus.write(addr, data);
-    //                 CpuState::FinishedExecution
-    //             },
-    //             _ => unreachable!()
-    //         }
-    // }
-
     fn store_indirect(&mut self, reg: Register16) {
         self.state =
             match self.state {

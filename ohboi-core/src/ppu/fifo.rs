@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 use crate::ppu::vram::{Tile, TileAttributes, Vram};
-use super::{Sprite, SpritePixel, TilePixel, Tileset};
+use crate::ppu::oam::Sprite;
 
 enum PixelFetcherState {
     GetTile,
@@ -42,22 +42,21 @@ impl TileData {
             vram.get_tile(self.tile_row_addr + self.tile_row_index, signed_tileset);
     }
 
-    pub fn get_tile_pixel(&self, tileset: &Tileset, x: usize) -> TilePixel {
-        match *tileset {
-            Tileset::Dmg(tileset) => TilePixel {
+    pub fn get_tile_pixel(&self, cgb: bool, x: usize) -> TilePixel {
+        if !cgb {
+            TilePixel {
                 color: self.tile[self.tile_y as usize][x],
                 palette: 0,
                 priority: false,
-            },
-            Tileset::Cgb(tileset0, tileset1) => {
-                let x = if self.tile_attributes.x_flip() { 7 - x } else { x };
-                let y = if self.tile_attributes.y_flip() { 7 - self.tile_y } else { self.tile_y } as usize;
-                TilePixel {
-                    color: self.tile[y][x],
-                    palette: self.tile_attributes.palette(),
-                    priority: self.tile_attributes.priority(),
-                }
-            },
+            }
+        } else {
+            let x = if self.tile_attributes.x_flip() { 7 - x } else { x };
+            let y = if self.tile_attributes.y_flip() { 7 - self.tile_y } else { self.tile_y } as usize;
+            TilePixel {
+                color: self.tile[y][x],
+                palette: self.tile_attributes.palette(),
+                priority: self.tile_attributes.priority(),
+            }
         }
     }
 
@@ -103,35 +102,32 @@ impl SpriteData {
         self.current_sprite = *sprite;
     }
 
-    pub fn get_sprite_pixel(&self, tile_x: usize, tileset: &Tileset, vram: &Vram) -> SpritePixel {
-        match tileset {
-            Tileset::Dmg(tileset) => {
-                let sprite_y = self.sprite_tile_y as usize;
-                let sprite_x = if self.current_sprite.x_flip() { tile_x } else { 7 - tile_x };
-                let tile = vram.get_sprite_tile(self.sprite_tile_index, self.current_sprite.attributes.vram_bank() as usize);
-                SpritePixel {
-                    pixel: TilePixel {
-                        color: tile[sprite_y][sprite_x],
-                        palette: self.current_sprite.dmg_palette_number(),
-                        priority: self.current_sprite.has_priority(),
-                    },
-                    oam_offset: self.current_sprite.oam_offset,
-                }
-            },
-            Tileset::Cgb(tileset0, tileset1) => {
-                let x = if self.current_sprite.x_flip() { tile_x } else { 7 - tile_x };
-                let y = self.sprite_tile_y as usize;
-                let bank = self.current_sprite.attributes.vram_bank() as usize;
-                let tile = vram.get_sprite_tile(self.sprite_tile_index, bank);
-                let color = tile[y][x];
-                SpritePixel {
-                    pixel: TilePixel {
-                        color,
-                        palette: self.current_sprite.cgb_palette_number(),
-                        priority: self.current_sprite.has_priority(),
-                    },
-                    oam_offset: self.current_sprite.oam_offset,
-                }
+    pub fn get_sprite_pixel(&self, tile_x: usize, cgb: bool, vram: &Vram) -> SpritePixel {
+        if !cgb {
+            let sprite_y = self.sprite_tile_y as usize;
+            let sprite_x = if self.current_sprite.x_flip() { tile_x } else { 7 - tile_x };
+            let tile = vram.get_sprite_tile(self.sprite_tile_index, self.current_sprite.attributes.vram_bank() as usize);
+            SpritePixel {
+                pixel: TilePixel {
+                    color: tile[sprite_y][sprite_x],
+                    palette: self.current_sprite.dmg_palette_number(),
+                    priority: self.current_sprite.has_priority(),
+                },
+                oam_offset: self.current_sprite.oam_offset,
+            }
+        } else {
+            let x = if self.current_sprite.x_flip() { tile_x } else { 7 - tile_x };
+            let y = self.sprite_tile_y as usize;
+            let bank = self.current_sprite.attributes.vram_bank() as usize;
+            let tile = vram.get_sprite_tile(self.sprite_tile_index, bank);
+            let color = tile[y][x];
+            SpritePixel {
+                pixel: TilePixel {
+                    color,
+                    palette: self.current_sprite.cgb_palette_number(),
+                    priority: self.current_sprite.has_priority(),
+                },
+                oam_offset: self.current_sprite.oam_offset,
             }
         }
     }
@@ -213,13 +209,13 @@ impl PixelFetcher {
         self.sprite_data.start_fetch(y, &sprite, use_8x16);
     }
 
-    pub fn step(&mut self, vram: &Vram, tileset: Tileset, signed_tileset: bool) {
+    pub fn step(&mut self, vram: &Vram, cgb: bool, signed_tileset: bool) {
         match self.state {
-            PixelFetcherState::GetTile => self.get_tile(vram, signed_tileset, matches!(tileset, Tileset::Cgb(_, _))),
+            PixelFetcherState::GetTile => self.get_tile(vram, signed_tileset, cgb),
             PixelFetcherState::GetTileDataLo => self.get_tile_data_lo(),
             PixelFetcherState::GetTileDataHi => self.get_tile_data_hi(),
             PixelFetcherState::Sleep => self.sleep(),
-            PixelFetcherState::Push => self.push(tileset, vram)
+            PixelFetcherState::Push => self.push(cgb, vram)
         }
     }
 
@@ -268,12 +264,11 @@ impl PixelFetcher {
         }
     }
 
-    fn push(&mut self, tileset: Tileset, vram: &Vram) {
-        let cgb = matches!(tileset, Tileset::Cgb(_, _));
+    fn push(&mut self, cgb: bool, vram: &Vram) {
         if self.rendering_sprites {
             if self.spr_fifo.len() <= 8 {
                 for tile_x in 0..8 {
-                    let sprite_pixel = self.sprite_data.get_sprite_pixel(tile_x, &tileset, vram);
+                    let sprite_pixel = self.sprite_data.get_sprite_pixel(tile_x, cgb, vram);
                     if self.spr_fifo.len() <= tile_x {
                         self.spr_fifo.push_back(sprite_pixel);
                     } else if self.spr_fifo[tile_x].pixel.color == 0 ||
@@ -288,7 +283,7 @@ impl PixelFetcher {
             let tile_x = 7 - self.scroll_quantity as usize;
             self.scroll_quantity = 0;
             for x in (0..=tile_x).rev() {
-                let pixel = self.tile_data.get_tile_pixel(&tileset, x);
+                let pixel = self.tile_data.get_tile_pixel(cgb, x);
                 // TODO cgb
                 self.bg_fifo.push_back(pixel);
             }
@@ -323,4 +318,16 @@ impl PixelFetcher {
     pub fn is_spr_fifo_full(&self) -> bool {
         self.spr_fifo.len() >= 8
     }
+}
+
+#[derive(Default)]
+pub struct TilePixel {
+    pub color: u8,
+    pub palette: u8,
+    pub priority: bool
+}
+
+pub struct SpritePixel {
+    pub(crate) pixel: TilePixel,
+    oam_offset: u8
 }

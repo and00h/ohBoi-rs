@@ -9,10 +9,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use bitfield::bitfield;
 use log::{trace, warn};
-use fifo::PixelFetcher;
+use fifo::{PixelFetcher, TilePixel};
+use oam::Sprite;
 use palettes::DmgPalette;
 use vram::Tile;
 use crate::cpu::interrupts::{Interrupt, InterruptController};
+use crate::ppu::oam::Oam;
 use crate::ppu::palettes::CgbPalette;
 use crate::ppu::vram::Vram;
 
@@ -60,79 +62,10 @@ mod lcd_stat_interrupts {
     pub const _LY_COMPARE_INTERRUPT: u8  = 0b01000000;
 }
 
-bitfield! {
-    #[derive(Copy, Clone, Default)]
-    pub struct SpriteAttributes(u8);
-    impl Debug;
-    pub cgb_palette_number, set_cgb_palette_number: 2, 0;
-    pub vram_bank, set_vram_bank: 3, 3;
-    pub dmg_palette_number, set_dmg_palette_number: 4;
-    pub x_flip, set_x_flip: 5;
-    pub y_flip, set_y_flip: 6;
-    pub bg_window_priority, set_bg_window_priority: 7;
-}
-
 mod dmg_palettes {
     pub(crate) const BG: usize = 0;
     pub(crate) const OBJ0: usize = 1;
     pub(crate) const OBJ1: usize = 2;
-}
-
-enum Tileset<'a> {
-    Dmg(&'a[Tile]),
-    Cgb(&'a[Tile], &'a[Tile])
-}
-
-#[derive(Default)]
-struct TilePixel {
-    pub color: u8,
-    pub palette: u8,
-    pub priority: bool
-}
-
-struct SpritePixel {
-    pixel: TilePixel,
-    oam_offset: u8
-}
-
-#[derive(Copy, Clone, Default)]
-struct Sprite {
-    pub oam_offset: u8,
-    pub y: u8,
-    pub x: u8,
-    pub tile_location: u8,
-    pub attributes: SpriteAttributes
-}
-
-impl Sprite {
-    pub fn new(oam_offset: u8, oam_data: &[u8]) -> Self {
-        Self {
-            oam_offset,
-            y: oam_data[0],
-            x: oam_data[1],
-            tile_location: oam_data[2],
-            attributes: SpriteAttributes(oam_data[3])
-        }
-    }
-
-    pub fn cgb_palette_number(&self) -> u8 {
-        self.attributes.cgb_palette_number()
-    }
-    pub fn x_flip(&self) -> bool {
-        self.attributes.x_flip()
-    }
-    pub fn y_flip(&self) -> bool {
-        self.attributes.y_flip()
-    }
-    pub fn _vram_bank(&self) -> u8 {
-        self.attributes.vram_bank() as u8
-    }
-    pub fn dmg_palette_number(&self) -> u8 {
-        self.attributes.dmg_palette_number() as u8
-    }
-    pub fn has_priority(&self) -> bool {
-        !self.attributes.bg_window_priority()
-    }
 }
 
 struct Window {
@@ -146,10 +79,8 @@ pub struct Ppu {
     interrupt_controller: Rc<RefCell<InterruptController>>,
     screen: [u8; WIDTH * HEIGHT * 4],
     vram: Vram,
-    oam: [u8; 0xA0],
+    oam: Oam,
     pub (crate) state: PpuState,
-    tileset0: [Tile; 384],
-    tileset1: Option<[Tile; 384]>,
     sprites: Vec<Sprite>,
     lcdc: Lcdc,
     lcd_stat: LcdStat,
@@ -171,7 +102,6 @@ pub struct Ppu {
 
 impl Ppu {
     pub fn new(interrupt_controller: Rc<RefCell<InterruptController>>, cgb: bool) -> Self {
-        let tileset1 = if cgb { Some([Tile::default(); 384]) } else { None };
         let cgb_bg_pal = if cgb { Some(CgbPalette::new()) } else { None };
         let cgb_obj_pal = if cgb { Some(CgbPalette::new()) } else { None };
         
@@ -179,10 +109,8 @@ impl Ppu {
             interrupt_controller,
             screen: [0; WIDTH * HEIGHT * 4],
             vram: Vram::new(cgb),
-            oam: [0; 0xA0],
+            oam: Oam::new(),
             state: PpuState::VBlank,
-            tileset0: [Tile::default(); 384],
-            tileset1,
             sprites: Vec::new(),
             lcdc: Lcdc(0x91),
             lcd_stat: LcdStat(0x80 | PpuState::VBlank as u8),
@@ -234,10 +162,7 @@ impl Ppu {
 
         self.screen = [0; WIDTH * HEIGHT * 4];
         self.vram.reset();
-        self.oam = [0; 0xA0];
-        self.tileset0 = [Tile::default(); 384];
-        self.tileset1 = if self.cgb { Some([Tile::default(); 384]) } else { None };
-
+        self.oam.reset();
     }
 
     fn read_vram(&self, addr: u16) -> u8 {
@@ -254,15 +179,6 @@ impl Ppu {
         if !matches!(self.state, PpuState::PixelTransfer) {
             trace!("Writing val {:02X} to VRAM addr {:04X})", val, addr);
             self.vram.write(addr, val);
-            // if addr < 0x1800 {
-            //     if self.vram_bank == 0 {
-            //         self.tileset0[(addr >> 4) as usize].update_byte((addr & 0xF) as usize, val);
-            //     } else {
-            //         let mut t1 = self.tileset1.unwrap();
-            //         t1[(addr >> 4) as usize].update_byte((addr & 0xF) as usize, val);
-            //         self.tileset1.replace(t1);
-            //     }
-            // } 
         }
     }
 
@@ -403,12 +319,13 @@ impl Ppu {
 
     fn oam_search(&mut self) {
         self.sprites.clear();
-        for i in (0..0xA0).step_by(4) {
+        for i in 0..40 {
             let oam_index = i as usize;
-            let sprite = Sprite::new(i, &self.oam[oam_index..oam_index + 4]);
+            let sprite = self.oam.get_sprite(oam_index);
             let obj_size = if self.lcdc.obj_size() { 16 } else { 8 };
-            let visible_range = sprite.y..sprite.y.wrapping_add(obj_size);
-            if visible_range.contains(&(self.ly as u8 + 16)) {
+            let y = sprite.y as usize;
+            let visible_range = y..y + obj_size;
+            if visible_range.contains(&(self.ly + 16)) {
                 self.sprites.push(sprite);
             }
             if self.sprites.len() == 10 {
@@ -516,7 +433,7 @@ impl Ppu {
     fn step_pixel_fetcher(&mut self) {
         let signed_tileset = !self.lcdc.bg_window_tile_data();
         self.pixel_fetcher.step(&self.vram,
-                                if self.cgb { Tileset::Cgb(&self.tileset0, self.tileset1.as_ref().unwrap()) } else { Tileset::Dmg(&self.tileset0) },
+                                self.cgb,
                                 signed_tileset);
 
     }
@@ -580,7 +497,7 @@ impl Ppu {
     
     #[cfg(feature = "debugging")]
     pub fn get_tileset1(&self) -> Option<Vec<u8>> {
-        if let Some(ref tileset1) = self.tileset1 {
+        if self.cgb {
             let mut res = Vec::new();
             for y in 0..(12 * 8) {
                 for x in 0..(32 * 8) {
@@ -592,11 +509,7 @@ impl Ppu {
                     let line = y % 8;
                     let pixel = x % 8;
                     let color = tile[line][7 - pixel];
-                    let palette = if self.cgb {
-                        self.cgb_bg_pal.as_ref().unwrap().color_array(color as usize)
-                    } else {
-                        self.dmg_palettes[dmg_palettes::BG].colors().to_owned()
-                    };
+                    let palette = self.cgb_bg_pal.as_ref().unwrap().color_array(color as usize);
                     res.extend(palette[color as usize].iter());
                 }
             }
