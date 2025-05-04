@@ -3,12 +3,20 @@
 use std::collections::VecDeque;
 use crate::ppu::vram::{Tile, TileAttributes, Vram};
 use crate::ppu::oam::Sprite;
+use crate::ppu::Ppu;
 
 enum PixelFetcherState {
+    Inactive,
     GetTile,
     GetTileDataLo,
     GetTileDataHi,
-    Sleep,
+    Push
+}
+
+enum FetcherState {
+    GetTile,
+    GetTileDataLo,
+    GetTileDataHi,
     Push
 }
 
@@ -138,6 +146,67 @@ impl SpriteData {
     }
 }
 
+pub struct Fetcher {
+    pub(super) fifo: VecDeque<TilePixel>,
+    state: FetcherState,
+    pub(super) fetcher_tile_x: u8,
+    fetcher_tile_y: u8,
+    tile_hi: u8,
+    tile_lo: u8,
+    tile_number: u8,
+    paused: bool,
+}
+
+impl Fetcher {
+    pub fn new() -> Self {
+        Self {
+            fifo: VecDeque::new(),
+            state: FetcherState::GetTile,
+            fetcher_tile_x: 0,
+            fetcher_tile_y: 0,
+            tile_hi: 0,
+            tile_lo: 0,
+            tile_number: 0,
+            paused: true,
+        }
+    }
+    
+    pub fn clock(&mut self, ppu: &Ppu) {
+        if (self.paused) {
+            return;
+        }
+    } 
+    
+    pub fn start_fetch(&mut self) {
+        self.paused = false;
+        self.state = FetcherState::GetTile;
+        self.fifo.clear();
+        
+    }
+    
+    fn get_tile(&mut self, ppu: &Ppu) {
+        self.fetcher_tile_x = 0;
+        self.fetcher_tile_y = 32 * (ppu.window.internal_line_counter / 8);
+        let tilemap =
+            if ppu.lcdc.window_tile_map() {
+                0x1C00
+            } else {
+                0x1800
+            };
+        self.tile_number = ppu.vram[tilemap as usize + ]
+    }
+    
+    pub fn end_scanline(&mut self) {
+        self.paused = false;
+        self.state = FetcherState::GetTile;
+        self.fifo.clear();
+        self.fetcher_tile_x = 0;
+        self.fetcher_tile_y = 0;
+        self.tile_hi = 0;
+        self.tile_lo = 0;
+    }
+}
+
 pub struct PixelFetcher {
     state: PixelFetcherState,
     tile_data: TileData,
@@ -214,7 +283,7 @@ impl PixelFetcher {
             PixelFetcherState::GetTile => self.get_tile(vram, signed_tileset, cgb),
             PixelFetcherState::GetTileDataLo => self.get_tile_data_lo(),
             PixelFetcherState::GetTileDataHi => self.get_tile_data_hi(),
-            PixelFetcherState::Sleep => self.sleep(),
+            PixelFetcherState::Inactive => self.sleep(),
             PixelFetcherState::Push => self.push(cgb, vram)
         }
     }
@@ -247,12 +316,12 @@ impl PixelFetcher {
                 if self.spr_fifo.len() <= 8 {
                     PixelFetcherState::Push
                 } else {
-                    PixelFetcherState::Sleep
+                    PixelFetcherState::Inactive
                 }
             } else if self.bg_fifo.len() <= 8 {
                 PixelFetcherState::Push
             } else {
-                PixelFetcherState::Sleep
+                PixelFetcherState::Inactive
             }
         }
     }

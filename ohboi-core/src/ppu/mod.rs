@@ -31,7 +31,7 @@ pub (crate) enum PpuState {
 }
 
 bitfield! {
-    struct Lcdc(u8);
+    pub(in self) struct Lcdc(u8);
     impl Debug;
     pub bg_window_enable_priority, set_bg_window_enable_priority: 0;
     pub obj_enable, set_obj_enable: 1;
@@ -68,7 +68,7 @@ mod dmg_palettes {
     pub(crate) const OBJ1: usize = 2;
 }
 
-struct Window {
+pub struct Window {
     x: u8,
     y: u8,
     rendering: bool,
@@ -360,7 +360,7 @@ impl Ppu {
                 self.sprites
                     .iter_mut()
                     .enumerate()
-                    .find(|(_, s)| s.x != 0 && (s.x.saturating_sub(8)..s.x).contains(&self.current_pixel));
+                    .find(|(_, s)| s.x != 0 && (((s.x as i16 - 8))..s.x as i16).contains(&(self.current_pixel as i16)));
 
             if let Some((index, sprite)) = sprite {
                 if self.pixel_fetcher.is_bg_fifo_full() {
