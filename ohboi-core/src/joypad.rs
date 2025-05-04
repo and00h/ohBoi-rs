@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::interrupts::{Interrupt, InterruptController};
+use crate::cpu::interrupts::{Interrupt, InterruptController};
 
 mod key_masks {
     pub const RIGHT_A: u8      = 0b00000001;
@@ -115,7 +115,7 @@ impl Joypad {
 mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
-    use crate::interrupts::{Interrupt, InterruptController};
+    use crate::cpu::interrupts::{Interrupt, InterruptController};
     use crate::joypad::{Joypad, Key, key_masks};
 
     #[inline]

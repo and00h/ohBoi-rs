@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::interrupts::{Interrupt, InterruptController};
+use crate::cpu::interrupts::{Interrupt, InterruptController};
 
 mod timer_control_flags {
     pub const ENABLE: u8 = 0b00000100;

@@ -3,23 +3,23 @@
 mod instructions;
 mod prefixed_insts;
 mod registers;
+pub mod interrupts;
+
 pub use registers::*;
 
 use cfg_if::cfg_if;
 use std::cell::RefCell;
 use std::collections::vec_deque::VecDeque;
-use std::fmt::{Debug};
+use std::fmt::Debug;
 use std::rc::Rc;
 use log::{debug, trace, warn};
 
-use crate::{
-    bus::BusController,
-    interrupts::{Interrupt, InterruptController}
-};
+use crate::bus::BusController;
 
 use registers::Register8::*;
 use registers::Register16::*;
 use instructions::{InstArg, INSTRUCTIONS};
+use interrupts::{Interrupt, InterruptController};
 use prefixed_insts::PREFIXED_INSTS;
 
 cfg_if! { 
@@ -270,6 +270,9 @@ impl Cpu {
 
     pub(crate) fn advance(&mut self) {
         use self::CpuState::*;
+        if matches!(self.state, HdmaHalted) {
+            return;
+        }
         let old_state = self.state;
         match self.state {
             Fetching { halt_bug } => self.fetch(halt_bug),

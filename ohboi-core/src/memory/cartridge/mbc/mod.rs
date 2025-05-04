@@ -47,7 +47,7 @@ pub(super) fn make_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u
             Box::new(Mbc1::new(rom, header, None, false)),
         CartridgeType::Mbc1Ram =>
             Box::new(Mbc1::new(rom, header, ram, false)),
-        CartridgeType::Mbc1RamBattery => Box::new(mbc1::Mbc1::new(rom, header, ram, true)),
+        CartridgeType::Mbc1RamBattery => Box::new(Mbc1::new(rom, header, ram, true)),
         CartridgeType::Mbc3TimerBattery =>
             Box::new(Mbc3::new(rom, header, None, true, true)),
         CartridgeType::Mbc3TimerRamBattery =>

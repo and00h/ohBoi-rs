@@ -16,7 +16,7 @@ use crate::ui::GameWindowEvent::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let log_buffer = Arc::new(Mutex::new(VecDeque::new()));
-    setup_logger(3, 1, Arc::clone(&log_buffer))?;
+    setup_logger(1, 0, Arc::clone(&log_buffer))?;
     
     info!("Starting ohBoi");
     let mut gb = GameBoy::new(PathBuf::from("./tetris.gb"))?;

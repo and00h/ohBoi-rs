@@ -8,7 +8,7 @@ use crate::audio::{Apu};
 use crate::bus::Bus;
 use crate::cpu::{Cpu, Speed};
 use crate::ppu::{Ppu, PpuState};
-use crate::interrupts::InterruptController;
+use crate::cpu::interrupts::InterruptController;
 use crate::joypad::{Joypad, Key};
 use crate::memory::cartridge::Cartridge;
 use crate::memory::dma::{DmaController, HdmaController, HdmaState};
@@ -109,7 +109,7 @@ impl GameBoy {
             if !matches!(cpu_state, CpuState::Halted) {
                 (*self.dma).borrow_mut().clock();
             }
-            if !matches!(cpu_state, CpuState::Stopped(_)) { (*self.timer).borrow_mut().clock(); }
+            if !matches!(cpu_state, CpuState::Stopped(_) | CpuState::HdmaHalted) { (*self.timer).borrow_mut().clock(); }
             (*self.cpu).borrow_mut().clock();
         }
         self.cycle_counter += 4;

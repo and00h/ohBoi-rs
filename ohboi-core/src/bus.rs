@@ -7,7 +7,7 @@ use log::{trace, warn};
 use crate::audio::Apu;
 use crate::cpu::{Cpu, Speed};
 use crate::ppu::Ppu;
-use crate::interrupts::InterruptController;
+use crate::cpu::interrupts::InterruptController;
 use crate::joypad::Joypad;
 use crate::memory::cartridge::Cartridge;
 use crate::timers::Timer;

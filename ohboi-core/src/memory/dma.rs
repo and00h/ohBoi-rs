@@ -266,7 +266,7 @@ impl HdmaController {
     pub fn start_hdma(&mut self) {
         self.hdma_source = (self.hdma1 as u16) << 8 | (self.hdma2 as u16);
         self.hdma_dest = (((self.hdma3 as u16) << 8) | (self.hdma4 as u16)) + 0x8000;
-        self.hdma_len = (((self.hdma5 & 0x7F) as u16) + 1) << 4;
+        self.hdma_len = (((self.hdma5 & 0x7F) as u16) << 4) + 1;
         self.hdma_active = true;
         self.hdma_index = 0;
         if self.hdma5 & 0x80 == 0 {
@@ -327,11 +327,16 @@ impl HdmaController {
                 }
             }
             HdmaState::GdmaTransfer => {
-                self.transfer();
-                if self.hdma_index == self.hdma_len || self.hdma_dest + self.hdma_index >= 0xA000 {
-                    self.hdma_active = false;
-                    self.hdma5 = 0xFF;
-                    self.state = HdmaState::Idle;
+                // TODO: fix HDMA/GDMA transfer, this is horrible and absolutely not cycle accurate
+                // (but it works for now)
+                loop {
+                    self.transfer();
+                    if self.hdma_index == self.hdma_len || self.hdma_dest + self.hdma_index >= 0xA000 {
+                        self.hdma_active = false;
+                        self.hdma5 = 0xFF;
+                        self.state = HdmaState::Idle;
+                        break;
+                    }
                 }
             }
             HdmaState::Idle => {}
