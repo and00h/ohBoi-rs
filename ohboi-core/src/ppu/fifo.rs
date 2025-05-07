@@ -1,14 +1,22 @@
 // Copyright Antonio Porsia 2025. Licensed under the EUPL-1.2 or later.
 
 use std::collections::VecDeque;
-use crate::ppu::vram::{Tile, TileAttributes, Vram};
-use crate::ppu::oam::Sprite;
+use crate::ppu::vram::{get_tile_pixel, tileidx_to_address, Tile, TileAttributes, Vram};
+use crate::ppu::oam::{Sprite, SpriteAttributes};
+use crate::ppu::Ppu;
 
 enum PixelFetcherState {
     GetTile,
     GetTileDataLo,
     GetTileDataHi,
     Sleep,
+    Push
+}
+
+enum FetcherState {
+    GetTile,
+    GetTileDataLo,
+    GetTileDataHi,
     Push
 }
 
@@ -135,6 +143,306 @@ impl SpriteData {
     #[inline]
     pub fn has_priority_over_sprite(&self, oam_offset: u8) -> bool {
         self.current_sprite.oam_offset < oam_offset
+    }
+}
+
+pub struct BackgroundFetcher {
+    state: FetcherState,
+    pub(super) fifo: VecDeque<TilePixel>,
+    fetcher_x: u8,
+    fetcher_y: u8,
+    x_scroll: u8,
+    tile: [u8; 2],
+    tile_number: u8,
+    tile_address: usize,
+    tile_attributes: TileAttributes,
+    paused: bool,
+    clock_divider: bool
+}
+
+impl BackgroundFetcher {
+    pub fn new() -> Self {
+        Self {
+            state: FetcherState::GetTile,
+            fifo: VecDeque::new(),
+            fetcher_x: 0,
+            fetcher_y: 0,
+            x_scroll: 0,
+            tile: [0; 2],
+            tile_number: 0,
+            tile_address: 0,
+            tile_attributes: TileAttributes::default(),
+            paused: true,
+            clock_divider: true,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.state = FetcherState::GetTile;
+        self.fifo.clear();
+        self.fetcher_x = 0;
+        self.fetcher_y = 0;
+        self.x_scroll = 0;
+        self.tile = [0; 2];
+        self.tile_number = 0;
+        self.tile_address = 0;
+        self.tile_attributes = TileAttributes::default();
+        self.paused = true;
+        self.clock_divider = true;
+    }
+    
+    pub fn clock(&mut self, ppu: &Ppu) {
+        if self.paused {
+            return;
+        }
+        
+        self.clock_divider = !self.clock_divider;
+        
+        match self.state {
+            FetcherState::GetTile if self.clock_divider => self.get_tile(ppu),
+            FetcherState::GetTileDataLo if self.clock_divider => self.get_tile_data_lo(ppu),
+            FetcherState::GetTileDataHi if self.clock_divider => self.get_tile_data_hi(ppu),
+            FetcherState::Push if self.clock_divider => self.push(ppu),
+            _ => {}
+        }
+    }
+    
+    pub fn start_fetch(&mut self, ppu: &Ppu) {
+        self.fetcher_x = if ppu.window.rendering { 0 } else { ppu.scroll_x };
+        self.fetcher_y = if ppu.window.rendering {
+            ppu.window.internal_line_counter
+        } else {
+            (ppu.ly as u8).wrapping_add(ppu.scroll_y) 
+        };
+        self.x_scroll = ppu.scroll_x & 7;
+        self.paused = false;
+        self.state = FetcherState::GetTile;
+        self.fifo.clear();
+    }
+    
+    fn get_tile(&mut self, ppu: &Ppu) {
+        let tile_x = (self.fetcher_x >> 3) as usize;
+        let tile_y = (self.fetcher_y >> 3) as usize;
+        let tilemap = if ppu.window.rendering {
+            if ppu.lcdc.window_tile_map() {
+                0x1C00
+            } else {
+                0x1800
+            }
+        } else {
+            if ppu.lcdc.bg_tile_map() {
+                0x1C00
+            } else {
+                0x1800
+            }
+        };
+        self.tile_number = ppu.vram[tilemap + ((32 * tile_y + tile_x) & 0x3ff)];
+        self.tile_attributes = 
+            TileAttributes(ppu.vram[tilemap + ((32 * tile_y + tile_x) & 0x3ff) + 0x2000]);
+
+        let signed_tileset = !ppu.lcdc.bg_window_tile_data();
+        self.tile_address =
+            tileidx_to_address!(self.tile_number as usize, 
+                signed_tileset, 
+                self.tile_attributes.bank() as usize);
+        self.state = FetcherState::GetTileDataLo;
+    }
+    
+    fn get_tile_data_lo(&mut self, ppu: &Ppu) {
+        let mut y = self.fetcher_y as usize & 7;
+        if self.tile_attributes.y_flip() { y = 7 - y; }
+        self.tile[0] = 
+            ppu.vram[self.tile_address + y * 2];
+        self.state = FetcherState::GetTileDataHi;
+    }
+    
+    fn get_tile_data_hi(&mut self, ppu: &Ppu) {
+        let mut y = self.fetcher_y as usize & 7;
+        if self.tile_attributes.y_flip() { y = 7 - y; }
+        self.tile[1] = 
+            ppu.vram[self.tile_address + y * 2 + 1];
+        self.state = FetcherState::Push;
+    }
+    
+    fn push(&mut self, ppu: &Ppu) {
+        if !self.fifo.is_empty() {
+            return;
+        }
+        for x in (0..8).rev() {
+            let tile_x = if self.tile_attributes.x_flip() {
+                7 - x
+            } else {
+                x
+            } as usize;
+            let color = get_tile_pixel!(self.tile, tile_x);
+            let pixel = TilePixel {
+                color,
+                palette: self.tile_attributes.palette(),
+                priority: self.tile_attributes.priority(),
+            };
+            self.fifo.push_back(pixel);
+            self.fetcher_x += 1;
+        }
+        self.state = FetcherState::GetTile;
+    }
+    
+    pub fn end_scanline(&mut self) {
+        self.paused = true;
+        self.state = FetcherState::GetTile;
+        self.fifo.clear();
+        self.fetcher_x = 0;
+        self.fetcher_y = 0;
+        self.tile = [0; 2];
+    }
+    
+    pub fn pause(&mut self) {
+        self.paused = true;
+        self.state = FetcherState::GetTile;
+    }
+    
+    pub fn resume(&mut self) {
+        self.paused = false;
+    }
+}
+
+pub struct SpriteFetcher {
+    state: FetcherState,
+    pub(super) fifo: VecDeque<SpritePixel>,
+    fetcher_y: u8,
+    tile: [u8; 2],
+    tile_number: u8,
+    tile_address: usize,
+    sprite: Sprite,
+    paused: bool,
+    clock_divider: bool,
+}
+
+impl SpriteFetcher {
+    pub fn new() -> Self {
+        Self {
+            state: FetcherState::GetTile,
+            fifo: VecDeque::new(),
+            fetcher_y: 0,
+            tile: [0; 2],
+            tile_number: 0,
+            tile_address: 0,
+            sprite: Sprite::default(),
+            paused: true,
+            clock_divider: true,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.state = FetcherState::GetTile;
+        self.fifo.clear();
+        self.fetcher_y = 0;
+        self.tile = [0; 2];
+        self.tile_number = 0;
+        self.tile_address = 0;
+        self.sprite = Sprite::default();
+        self.paused = true;
+        self.clock_divider = true;
+    }
+
+    pub fn clock(&mut self, ppu: &Ppu) {
+        if self.paused {
+            return;
+        }
+        
+        self.clock_divider = !self.clock_divider;
+
+        match self.state {
+            FetcherState::GetTile if self.clock_divider => self.get_tile(ppu),
+            FetcherState::GetTileDataLo if self.clock_divider => self.get_tile_data_lo(ppu),
+            FetcherState::GetTileDataHi if self.clock_divider => self.get_tile_data_hi(ppu),
+            FetcherState::Push => self.push(ppu),
+            _ => {}
+        }
+    }
+
+    pub fn start_fetch(&mut self, ppu: &Ppu, sprite_index: usize) {
+        self.sprite = ppu.sprites[sprite_index];
+        self.fetcher_y = ppu.ly as u8;
+        self.paused = false;
+        self.state = FetcherState::GetTile;
+        self.fifo.clear();
+    }
+
+    fn get_tile(&mut self, ppu: &Ppu) {
+        self.tile_number = self.sprite.tile_location;
+        if ppu.lcdc.obj_size() {
+            if self.fetcher_y >= self.sprite.y.wrapping_sub(8) {
+                self.tile_number |= 1;
+            } else {
+                self.tile_number &= 0xFE;
+            }
+        }
+        if self.sprite.y_flip() && ppu.lcdc.obj_size() {
+            if self.fetcher_y >= self.sprite.y.wrapping_sub(8) {
+                self.tile_number &= 0xFE;
+            } else {
+                self.tile_number |= 1;
+            }
+        }
+        self.tile_address =
+            tileidx_to_address!(self.tile_number as usize, 
+                false, 
+                self.sprite.attributes.vram_bank() as usize);
+        self.state = FetcherState::GetTileDataLo;
+    }
+
+    fn get_tile_data_lo(&mut self, ppu: &Ppu) {
+        let mut y = self.fetcher_y.wrapping_sub(self.sprite.y) as usize & 7;
+        if self.sprite.y_flip() { y = 7 - y; }
+        self.tile[0] =
+            ppu.vram[self.tile_address + y * 2];
+        self.state = FetcherState::GetTileDataHi;
+    }
+
+    fn get_tile_data_hi(&mut self, ppu: &Ppu) {
+        let mut y = self.fetcher_y.wrapping_sub(self.sprite.y) as usize & 7;
+        if self.sprite.y_flip() { y = 7 - y; }
+        self.tile[1] =
+            ppu.vram[self.tile_address + y * 2 + 1];
+        self.state = FetcherState::Push;
+    }
+
+    fn push(&mut self, ppu: &Ppu) {
+        for x in 0..8 {
+            let tile_x = if self.sprite.x_flip() {
+                x
+            } else {
+                7 - x
+            } as usize;
+            let color = get_tile_pixel!(self.tile, tile_x);
+            let tile_pixel = TilePixel {
+                color,
+                palette: if ppu.cgb { self.sprite.cgb_palette_number() } else { self.sprite.dmg_palette_number() },
+                priority: self.sprite.has_priority(),
+            };
+            let sprite_pixel = SpritePixel {
+                pixel: tile_pixel,
+                oam_offset: self.sprite.oam_offset,
+            };
+            if self.fifo.len() <= x as usize {
+                self.fifo.push_back(sprite_pixel);
+            } else if self.fifo[x as usize].pixel.color == 0 ||
+                (ppu.cgb && self.sprite.oam_offset < self.fifo[x as usize].oam_offset)
+            {
+                self.fifo[x as usize] = sprite_pixel;
+            }
+        }
+        self.paused = true;
+        self.state = FetcherState::GetTile;
+    }
+    
+    pub fn is_fetching(&self) -> bool {
+        !self.paused
+    }
+    pub fn end_scanline(&mut self) {
+        self.paused = true;
+        self.state = FetcherState::GetTile;
+        self.fifo.clear();
     }
 }
 

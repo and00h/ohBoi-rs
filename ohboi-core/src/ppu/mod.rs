@@ -14,6 +14,7 @@ use oam::Sprite;
 use palettes::DmgPalette;
 use vram::Tile;
 use crate::cpu::interrupts::{Interrupt, InterruptController};
+use crate::ppu::fifo::{BackgroundFetcher, SpriteFetcher};
 use crate::ppu::oam::Oam;
 use crate::ppu::palettes::CgbPalette;
 use crate::ppu::vram::Vram;
@@ -93,11 +94,13 @@ pub struct Ppu {
     current_pixel: u8,
     scanline_counter: u32,
     pixel_fetcher: PixelFetcher,
-
+    bg_fetcher: RefCell<BackgroundFetcher>,
+    spr_fetcher: RefCell<SpriteFetcher>,
     vram_bank: u8,
     cgb_bg_pal: Option<CgbPalette>,
     cgb_obj_pal: Option<CgbPalette>,
-    cgb: bool
+    cgb: bool,
+    initial_scroll: u8
 }
 
 impl Ppu {
@@ -124,9 +127,12 @@ impl Ppu {
             current_pixel: 0,
             scanline_counter: 0,
             pixel_fetcher: PixelFetcher::new(),
+            bg_fetcher: RefCell::new(BackgroundFetcher::new()),
+            spr_fetcher: RefCell::new(SpriteFetcher::new()),
             cgb_bg_pal,
             cgb_obj_pal,
-            cgb
+            cgb,
+            initial_scroll: 0
         }
     }
 
@@ -158,11 +164,15 @@ impl Ppu {
         self.current_pixel = 0;
         self.scanline_counter = 0;
         self.pixel_fetcher.reset();
+        self.bg_fetcher.borrow_mut().reset();
+        self.spr_fetcher.borrow_mut().reset();
         self.sprites.clear();
 
         self.screen = [0; WIDTH * HEIGHT * 4];
         self.vram.reset();
         self.oam.reset();
+        
+        self.initial_scroll = 0;
     }
 
     fn read_vram(&self, addr: u16) -> u8 {
@@ -336,72 +346,65 @@ impl Ppu {
             self.sprites.sort_by(|a, b| a.x.cmp(&b.x));
         }
 
-        let x = self.scroll_x;
-        let y = (self.ly as u8).wrapping_add(self.scroll_y);
+        // let x = self.scroll_x;
+        // let y = (self.ly as u8).wrapping_add(self.scroll_y);
         self.window.rendering = false;
-        let tilemap = if self.lcdc.bg_tile_map() { 0x1C00 } else { 0x1800 };
-        self.pixel_fetcher.clear_queues();
-        self.pixel_fetcher.start(x, y, tilemap, self.scroll_x & 0b111);
-
+        // let tilemap = if self.lcdc.bg_tile_map() { 0x1C00 } else { 0x1800 };
+        self.bg_fetcher.borrow_mut().start_fetch(self);
+        // self.pixel_fetcher.clear_queues();
+        // self.pixel_fetcher.start(x, y, tilemap, self.scroll_x & 0b111);
+        self.initial_scroll = self.scroll_x & 7;
         self.update_state(PpuState::PixelTransfer);
     }
 
     fn pixel_transfer(&mut self) {
-        if self.pixel_fetcher.rendering_sprites {
-            return;
+        self.bg_fetcher.borrow_mut().clock(self);
+        let fetching_sprites = self.spr_fetcher.borrow_mut().is_fetching();
+        self.spr_fetcher.borrow_mut().clock(self);
+        let still_fetching_sprites = self.spr_fetcher.borrow_mut().is_fetching();
+        if fetching_sprites && !still_fetching_sprites {
+            self.bg_fetcher.borrow_mut().resume();
         }
-
-        if self.lcdc.obj_enable() {
-            // Check if we have a sprite to render
-            // Sprites may be rendered if the following conditions are met:
-            // 1. The sprite is enabled
-            // 2. The sprite overlaps with the current pixel
-            let sprite =
-                self.sprites
-                    .iter_mut()
-                    .enumerate()
-                    .find(|(_, s)| s.x != 0 && (s.x.saturating_sub(8)..s.x).contains(&self.current_pixel));
-
-            if let Some((index, sprite)) = sprite {
-                if self.pixel_fetcher.is_bg_fifo_full() {
-                    self.pixel_fetcher.start_sprite_fetch(*sprite, self.lcdc.obj_size(), self.ly as u8);
-                    self.sprites.remove(index);
-                    return;
-                }
+        
+        // if self.pixel_fetcher.rendering_sprites {
+        //     return;
+        // }
+    
+        // if self.lcdc.obj_enable() {
+        //     // Check if we have a sprite to render
+        //     // Sprites may be rendered if the following conditions are met:
+        //     // 1. The sprite is enabled
+        //     // 2. The sprite overlaps with the current pixel
+        //     let sprite =
+        //         self.sprites
+        //             .iter_mut()
+        //             .enumerate()
+        //             .find(|(_, s)| s.x != 0 && (s.x.saturating_sub(8)..s.x).contains(&self.current_pixel));
+        // 
+        //     if let Some((index, _)) = sprite {
+        //         // if self.pixel_fetcher.is_bg_fifo_full() {
+        //         //     self.pixel_fetcher.start_sprite_fetch(*sprite, self.lcdc.obj_size(), self.ly as u8);
+        //         self.spr_fetcher.borrow_mut().start_fetch(self, index);
+        //         self.sprites.remove(index);
+        //             // return;
+        //         // }
+        //     }
+        // }
+        
+        if !self.spr_fetcher.borrow_mut().is_fetching() 
+            && !self.bg_fetcher.borrow_mut().fifo.is_empty() {
+            let tile_pixel = self.bg_fetcher.borrow_mut().fifo.pop_front().unwrap();
+            if self.initial_scroll > 0 {
+                self.initial_scroll -= 1;
+                return;
             }
-        }
-
-        // Start window rendering if the PPU is not currently rendering it, but it became visible
-        if !self.window.rendering && self.is_window_visible() {
-            self.window.rendering = true;
-
-            let x = self.current_pixel.wrapping_sub(self.window.x.wrapping_sub(7));
-            let y = self.window.internal_line_counter;
-            let tilemap =
-                if self.lcdc.window_tile_map() {
-                    0x1C00
-                } else {
-                    0x1800
-                };
-            self.pixel_fetcher.start(x, y, tilemap, 0);
-
-            return;
-        }
-
-
-        if self.pixel_fetcher.is_bg_fifo_full() {
-            let tile_pixel =
-                match self.pixel_fetcher.pop_bg() {
-                    Some(pixel) if self.lcdc.bg_window_enable_priority() || self.cgb => pixel,
-                    _ => TilePixel::default()
-            };
             let mut color = tile_pixel.color;
             let mut palette = if self.cgb {
                 self.cgb_bg_pal.as_ref().unwrap().color_array(tile_pixel.palette as usize)
             } else {
                 self.dmg_palettes[dmg_palettes::BG].colors().to_owned()
             };
-            if let Some(sprite_pixel) = self.pixel_fetcher.pop_spr() {
+            if let Some(sprite_pixel) = self.spr_fetcher.borrow_mut().fifo.pop_front() {
                 if sprite_pixel.pixel.color != 0 {
                     if self.cgb {
                         if !self.lcdc.bg_window_enable_priority() || (!tile_pixel.priority && sprite_pixel.pixel.priority) || tile_pixel.color == 0 {
@@ -418,7 +421,75 @@ impl Ppu {
             let pixel = (self.ly * 160 + self.current_pixel as usize) * 4;
             self.screen[pixel..pixel+4].copy_from_slice(&palette[color as usize]);
             self.advance_x();
+            // Start window rendering if the PPU is not currently rendering it, but it became visible
+            if !self.window.rendering && self.is_window_visible() {
+                self.window.rendering = true;
+
+                // let x = self.current_pixel.wrapping_sub(self.window.x.wrapping_sub(7));
+                // let y = self.window.internal_line_counter;
+                // let tilemap =
+                //     if self.lcdc.window_tile_map() {
+                //         0x1C00
+                //     } else {
+                //         0x1800
+                //     };
+                // self.pixel_fetcher.start(x, y, tilemap, 0);
+                self.bg_fetcher.borrow_mut().start_fetch(self);
+            }
+
+            if self.lcdc.obj_enable() {
+                // Check if we have a sprite to render
+                // Sprites may be rendered if the following conditions are met:
+                // 1. The sprite is enabled
+                // 2. The sprite overlaps with the current pixel
+                let sprite =
+                    self.sprites
+                        .iter_mut()
+                        .enumerate()
+                        .find(|(_, s)| s.x != 0 && ((s.x as i16).saturating_sub(8)..(s.x as i16)).contains(&(self.current_pixel as i16)));
+
+                if let Some((index, _)) = sprite {
+                    // if self.pixel_fetcher.is_bg_fifo_full() {
+                    //     self.pixel_fetcher.start_sprite_fetch(*sprite, self.lcdc.obj_size(), self.ly as u8);
+                    self.spr_fetcher.borrow_mut().start_fetch(self, index);
+                    self.bg_fetcher.borrow_mut().pause();
+                    self.sprites.remove(index);
+                    // return;
+                    // }
+                }
+            }
         }
+
+        // if self.pixel_fetcher.is_bg_fifo_full() {
+        //     let tile_pixel =
+        //         match self.pixel_fetcher.pop_bg() {
+        //             Some(pixel) if self.lcdc.bg_window_enable_priority() || self.cgb => pixel,
+        //             _ => TilePixel::default()
+        //     };
+        //     let mut color = tile_pixel.color;
+        //     let mut palette = if self.cgb {
+        //         self.cgb_bg_pal.as_ref().unwrap().color_array(tile_pixel.palette as usize)
+        //     } else {
+        //         self.dmg_palettes[dmg_palettes::BG].colors().to_owned()
+        //     };
+        //     if let Some(sprite_pixel) = self.pixel_fetcher.pop_spr() {
+        //         if sprite_pixel.pixel.color != 0 {
+        //             if self.cgb {
+        //                 if !self.lcdc.bg_window_enable_priority() || (!tile_pixel.priority && sprite_pixel.pixel.priority) || tile_pixel.color == 0 {
+        //                     color = sprite_pixel.pixel.color;
+        //                     palette = self.cgb_obj_pal.as_ref().unwrap().color_array(sprite_pixel.pixel.palette as usize);
+        //                 }
+        //             } else if !self.lcdc.bg_window_enable_priority() || sprite_pixel.pixel.priority || tile_pixel.color == 0 {
+        //                 color = sprite_pixel.pixel.color;
+        //                 palette = self.dmg_palettes[sprite_pixel.pixel.palette as usize + 1].colors().to_owned();
+        //             }
+        //         }
+        //     }
+        // 
+        //     let pixel = (self.ly * 160 + self.current_pixel as usize) * 4;
+        //     self.screen[pixel..pixel+4].copy_from_slice(&palette[color as usize]);
+        //     self.advance_x();
+        // }
     }
 
     fn advance_x(&mut self) {
@@ -427,6 +498,8 @@ impl Ppu {
             if self.window.rendering {
                 self.window.internal_line_counter += 1;
             }
+            self.bg_fetcher.borrow_mut().end_scanline();
+            self.spr_fetcher.borrow_mut().end_scanline();
             self.update_state(PpuState::HBlank);
         }
     }
@@ -464,6 +537,8 @@ impl Ppu {
         self.ly = 0;
         self.lcd_stat.set_state(PpuState::VBlank as u8);
         self.state = PpuState::VBlank;
+        self.bg_fetcher.borrow_mut().reset();
+        self.spr_fetcher.borrow_mut().reset();
     }
 
     pub fn screen(&self) -> &[u8] {

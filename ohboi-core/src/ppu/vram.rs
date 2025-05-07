@@ -162,3 +162,6 @@ where
         &mut self.vram[index]
     }
 }
+
+pub(crate) use tileidx_to_address;
+pub(crate) use get_tile_pixel;
