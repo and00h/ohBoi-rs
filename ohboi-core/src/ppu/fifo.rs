@@ -157,7 +157,8 @@ pub struct BackgroundFetcher {
     tile_address: usize,
     tile_attributes: TileAttributes,
     paused: bool,
-    clock_divider: bool
+    clock_divider: bool,
+    dummy_fetch: bool,
 }
 
 impl BackgroundFetcher {
@@ -174,6 +175,7 @@ impl BackgroundFetcher {
             tile_attributes: TileAttributes::default(),
             paused: true,
             clock_divider: true,
+            dummy_fetch: true,
         }
     }
 
@@ -189,6 +191,7 @@ impl BackgroundFetcher {
         self.tile_attributes = TileAttributes::default();
         self.paused = true;
         self.clock_divider = true;
+        self.dummy_fetch = true;
     }
     
     pub fn clock(&mut self, ppu: &Ppu) {
@@ -229,12 +232,10 @@ impl BackgroundFetcher {
             } else {
                 0x1800
             }
+        } else if ppu.lcdc.bg_tile_map() {
+            0x1C00
         } else {
-            if ppu.lcdc.bg_tile_map() {
-                0x1C00
-            } else {
-                0x1800
-            }
+            0x1800
         };
         self.tile_number = ppu.vram[tilemap + ((32 * tile_y + tile_x) & 0x3ff)];
         self.tile_attributes = 
@@ -261,7 +262,12 @@ impl BackgroundFetcher {
         if self.tile_attributes.y_flip() { y = 7 - y; }
         self.tile[1] = 
             ppu.vram[self.tile_address + y * 2 + 1];
-        self.state = FetcherState::Push;
+        if self.fetcher_x == 0 && self.dummy_fetch {
+            self.state = FetcherState::GetTile;
+            self.dummy_fetch = false;
+        } else {
+            self.state = FetcherState::Push;
+        }
     }
     
     fn push(&mut self, ppu: &Ppu) {
@@ -293,6 +299,7 @@ impl BackgroundFetcher {
         self.fetcher_x = 0;
         self.fetcher_y = 0;
         self.tile = [0; 2];
+        self.dummy_fetch = true;
     }
     
     pub fn pause(&mut self) {
@@ -418,7 +425,7 @@ impl SpriteFetcher {
             let tile_pixel = TilePixel {
                 color,
                 palette: if ppu.cgb { self.sprite.cgb_palette_number() } else { self.sprite.dmg_palette_number() },
-                priority: self.sprite.has_priority(),
+                priority: self.sprite.attributes.bg_window_priority(),
             };
             let sprite_pixel = SpritePixel {
                 pixel: tile_pixel,
@@ -637,5 +644,5 @@ pub struct TilePixel {
 
 pub struct SpritePixel {
     pub(crate) pixel: TilePixel,
-    oam_offset: u8
+    pub(crate) oam_offset: u8
 }

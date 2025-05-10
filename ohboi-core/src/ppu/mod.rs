@@ -14,7 +14,7 @@ use oam::Sprite;
 use palettes::DmgPalette;
 use vram::Tile;
 use crate::cpu::interrupts::{Interrupt, InterruptController};
-use crate::ppu::fifo::{BackgroundFetcher, SpriteFetcher};
+use crate::ppu::fifo::{BackgroundFetcher, SpriteFetcher, SpritePixel};
 use crate::ppu::oam::Oam;
 use crate::ppu::palettes::CgbPalette;
 use crate::ppu::vram::Vram;
@@ -407,7 +407,7 @@ impl Ppu {
             if let Some(sprite_pixel) = self.spr_fetcher.borrow_mut().fifo.pop_front() {
                 if sprite_pixel.pixel.color != 0 {
                     if self.cgb {
-                        if !self.lcdc.bg_window_enable_priority() || (!tile_pixel.priority && sprite_pixel.pixel.priority) || tile_pixel.color == 0 {
+                        if !self.lcdc.bg_window_enable_priority() || tile_pixel.color == 0 || (!tile_pixel.priority && !sprite_pixel.pixel.priority) {
                             color = sprite_pixel.pixel.color;
                             palette = self.cgb_obj_pal.as_ref().unwrap().color_array(sprite_pixel.pixel.palette as usize);
                         }
@@ -437,7 +437,7 @@ impl Ppu {
                 self.bg_fetcher.borrow_mut().start_fetch(self);
             }
 
-            if self.lcdc.obj_enable() {
+            if self.lcdc.obj_enable() || self.cgb {
                 // Check if we have a sprite to render
                 // Sprites may be rendered if the following conditions are met:
                 // 1. The sprite is enabled
