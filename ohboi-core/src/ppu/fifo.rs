@@ -372,7 +372,7 @@ impl SpriteFetcher {
         self.fetcher_y = ppu.ly as u8;
         self.paused = false;
         self.state = FetcherState::GetTile;
-        self.fifo.clear();
+        //self.fifo.clear();
     }
 
     fn get_tile(&mut self, ppu: &Ppu) {
@@ -416,11 +416,15 @@ impl SpriteFetcher {
 
     fn push(&mut self, ppu: &Ppu) {
         for x in 0..8 {
+            
+            if (x as i32) < (8 - self.sprite.x as i32) {
+                continue;
+            }
             let tile_x = if self.sprite.x_flip() {
                 x
             } else {
                 7 - x
-            } as usize;
+            };
             let color = get_tile_pixel!(self.tile, tile_x);
             let tile_pixel = TilePixel {
                 color,
@@ -431,12 +435,12 @@ impl SpriteFetcher {
                 pixel: tile_pixel,
                 oam_offset: self.sprite.oam_offset,
             };
-            if self.fifo.len() <= x as usize {
+            if self.fifo.len() <= x {
                 self.fifo.push_back(sprite_pixel);
-            } else if self.fifo[x as usize].pixel.color == 0 ||
-                (ppu.cgb && self.sprite.oam_offset < self.fifo[x as usize].oam_offset)
+            } else if self.fifo[x].pixel.color == 0 ||
+                (ppu.cgb && sprite_pixel.pixel.color != 0 && self.sprite.oam_offset < self.fifo[x].oam_offset)
             {
-                self.fifo[x as usize] = sprite_pixel;
+                self.fifo[x] = sprite_pixel;
             }
         }
         self.paused = true;
@@ -642,6 +646,7 @@ pub struct TilePixel {
     pub priority: bool
 }
 
+#[derive(Default)]
 pub struct SpritePixel {
     pub(crate) pixel: TilePixel,
     pub(crate) oam_offset: u8

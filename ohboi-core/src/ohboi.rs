@@ -232,4 +232,19 @@ impl GameBoy {
 
         tiles
     }
+    
+    pub fn toggle_bg(&mut self) {
+        let mut ppu = (*self.ppu).borrow_mut();
+        ppu.enable_bg = !ppu.enable_bg;
+    }
+    
+    pub fn toggle_window(&mut self) {
+        let mut ppu = (*self.ppu).borrow_mut();
+        ppu.enable_window = !ppu.enable_window;
+    }
+    
+    pub fn toggle_sprites(&mut self) {
+        let mut ppu = (*self.ppu).borrow_mut();
+        ppu.enable_obj = !ppu.enable_obj;
+    }
 }

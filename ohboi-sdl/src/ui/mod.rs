@@ -87,6 +87,12 @@ fn sdl_event_handler(e: &Event, gb: &mut GameBoy) -> Result<bool, Box<dyn Error>
                 Keycode::Down => gb.release(Key::Down),
                 Keycode::Left => gb.release(Key::Left),
                 Keycode::Right => gb.release(Key::Right),
+                #[cfg(feature = "debug_ui")]
+                Keycode::Num1 => gb.toggle_bg(),
+                #[cfg(feature = "debug_ui")]
+                Keycode::Num2 => gb.toggle_window(),
+                #[cfg(feature = "debug_ui")]
+                Keycode::Num3 => gb.toggle_sprites(),
                 _ => {}
             }
         },
